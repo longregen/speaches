@@ -5,6 +5,7 @@ import logging
 import os
 from typing import TYPE_CHECKING
 import uuid
+import warnings
 
 from fastapi import (
     FastAPI,
@@ -95,6 +96,11 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
 
 
 def create_app() -> FastAPI:
+    # loky (via joblib/scikit-learn) leaks a semaphore on shutdown — harmless, suppress the noise
+    warnings.filterwarnings(
+        "ignore", message="resource_tracker:.*leaked semaphore", module="multiprocessing.resource_tracker"
+    )
+
     config = get_config()  # HACK
     setup_logger(config.log_level)
     logger = logging.getLogger(__name__)
@@ -153,6 +159,14 @@ def create_app() -> FastAPI:
     async def _custom_http_exception_handler(request: Request, exc: HTTPException) -> Response:
         logger.error(f"HTTP error: {exc}")
         return await http_exception_handler(request, exc)
+
+    @app.exception_handler(Exception)
+    async def _unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+        logger.exception(f"Unhandled exception on {request.method} {request.url.path}")
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Internal server error", "error": str(exc)},
+        )
 
     # Public routers WITHOUT authentication
     app.include_router(misc_public_router)

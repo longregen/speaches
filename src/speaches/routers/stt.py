@@ -66,13 +66,16 @@ def translate_file(
     model: Annotated[ModelId, Form()],
     prompt: Annotated[str | None, Form()] = None,
     response_format: Annotated[ResponseFormat, Form()] = DEFAULT_RESPONSE_FORMAT,
-    temperature: Annotated[float, Form()] = 0.0,
+    temperature: Annotated[float | list[float], Form()] = 0.0,
 ) -> Response:
     model_card_data = get_model_card_data_or_raise(model)
     executor = find_executor_for_model_or_raise(model, model_card_data, executor_registry.translation)
 
     vad_request = VadRequest(audio=audio, vad_options=DEFAULT_VAD_OPTIONS)
     speech_segments = executor_registry.vad.model_manager.handle_vad_request(vad_request)
+
+    if temperature == 0.0:
+        temperature = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
 
     translation_request = TranslationRequest(
         audio=audio,
@@ -102,7 +105,6 @@ async def get_timestamp_granularities(request: Request) -> TimestampGranularitie
 def transcription_response_to_http_response(
     res: NonStreamingTranscriptionResponse | Generator[StreamingTranscriptionEvent],
 ) -> Response | StreamingResponse:
-    logger.error(f"Unexpected streaming transcription response type: {type(res)}")
     if isinstance(res, tuple):
         text, media_type = res
         return Response(content=text, media_type=media_type)
@@ -129,7 +131,7 @@ def transcribe_file(
     language: Annotated[str | None, Form()] = None,
     prompt: Annotated[str | None, Form()] = None,
     response_format: Annotated[ResponseFormat, Form()] = DEFAULT_RESPONSE_FORMAT,
-    temperature: Annotated[float, Form()] = 0.0,
+    temperature: Annotated[float | list[float], Form()] = 0.0,
     timestamp_granularities: Annotated[
         TimestampGranularities,
         # WARN: `alias` doesn't actually work.
@@ -153,6 +155,9 @@ def transcribe_file(
 
     vad_request = VadRequest(audio=audio, vad_options=DEFAULT_VAD_OPTIONS)
     speech_segments = executor_registry.vad.model_manager.handle_vad_request(vad_request)
+
+    if temperature == 0.0:
+        temperature = [0.0, 0.2, 0.4, 0.6, 0.8, 1.0]
 
     transcription_request = TranscriptionRequest(
         audio=audio,

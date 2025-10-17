@@ -20,7 +20,7 @@ from speaches.executors.shared.handler_protocol import (  # noqa: TC001
     TranslationRequest,
     TranslationResponse,
 )
-from speaches.executors.silero_vad_v5 import merge_segments
+from speaches.executors.silero_vad_v5 import SAMPLE_RATE, merge_segments
 from speaches.hf_utils import (
     HfModelFilter,
     extract_language_list,
@@ -151,13 +151,38 @@ class WhisperModelManager(BaseModelManager[WhisperModel]):
                 f"'{request.response_format}' response format is not supported for '{request.model}' model."
             )
         timelog_start = time.perf_counter()
+
+        merged_segments = merge_segments(
+            request.speech_segments,
+            request.vad_options,
+        )
+        clip_timestamps = [
+            {"start": seg["start"] / SAMPLE_RATE, "end": seg["end"] / SAMPLE_RATE} for seg in merged_segments
+        ]
+
+        if not clip_timestamps:
+            logger.info("No speech detected in audio after VAD, returning empty transcription")
+            match request.response_format:
+                case "text":
+                    return "", "text/plain"
+                case "json":
+                    return openai.types.audio.Transcription(text="")
+                case "verbose_json":
+                    return openai.types.audio.TranscriptionVerbose(
+                        language=request.language or "en",
+                        duration=request.audio.duration,
+                        text="",
+                        segments=[],
+                        words=None,
+                    )
+                case "vtt":
+                    return "WEBVTT\n\n", "text/vtt"
+                case "srt":
+                    return "", "text/plain"
+
         with self.load_model(request.model) as whisper:
             whisper_model = BatchedInferencePipeline(model=whisper)
 
-            clip_timestamps = merge_segments(
-                request.speech_segments,
-                request.vad_options,
-            )
             segments, transcription_info = whisper_model.transcribe(
                 request.audio.data,
                 task="transcribe",
@@ -166,7 +191,7 @@ class WhisperModelManager(BaseModelManager[WhisperModel]):
                 word_timestamps="word" in request.timestamp_granularities,
                 temperature=request.temperature,
                 vad_filter=False,
-                clip_timestamps=clip_timestamps,  # pyright: ignore[reportArgumentType]
+                clip_timestamps=clip_timestamps,
                 hotwords=request.hotwords,
                 without_timestamps=request.without_timestamps,
             )
@@ -190,13 +215,23 @@ class WhisperModelManager(BaseModelManager[WhisperModel]):
         **_kwargs,
     ) -> Generator[StreamingTranscriptionEvent]:
         timelog_start = time.perf_counter()
+
+        merged_segments = merge_segments(
+            request.speech_segments,
+            request.vad_options,
+        )
+        clip_timestamps = [
+            {"start": seg["start"] / SAMPLE_RATE, "end": seg["end"] / SAMPLE_RATE} for seg in merged_segments
+        ]
+
+        if not clip_timestamps:
+            logger.info("No speech detected in audio after VAD, returning empty transcription")
+            yield openai.types.audio.TranscriptionTextDoneEvent(type="transcript.text.done", text="", logprobs=None)
+            return
+
         with self.load_model(request.model) as whisper:
             whisper_model = BatchedInferencePipeline(model=whisper)
 
-            clip_timestamps = merge_segments(
-                request.speech_segments,
-                request.vad_options,
-            )
             segments, _transcription_info = whisper_model.transcribe(
                 request.audio.data,
                 task="transcribe",
@@ -205,18 +240,20 @@ class WhisperModelManager(BaseModelManager[WhisperModel]):
                 word_timestamps="word" in request.timestamp_granularities,
                 temperature=request.temperature,
                 vad_filter=False,
-                clip_timestamps=clip_timestamps,  # pyright: ignore[reportArgumentType]
+                clip_timestamps=clip_timestamps,
                 hotwords=request.hotwords,
                 without_timestamps=request.without_timestamps,
             )
 
+            all_text = []
             for segment in segments:
+                all_text.append(segment.text)
                 yield openai.types.audio.TranscriptionTextDeltaEvent(
                     type="transcript.text.delta", delta=segment.text, logprobs=None
                 )
 
             yield openai.types.audio.TranscriptionTextDoneEvent(
-                type="transcript.text.done", text="".join(segment.text for segment in segments), logprobs=None
+                type="transcript.text.done", text="".join(all_text), logprobs=None
             )
         logger.info(
             f"Transcribed {request.audio.duration} seconds of audio in {time.perf_counter() - timelog_start} seconds"

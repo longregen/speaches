@@ -69,7 +69,10 @@ class HfModelFilter(BaseModel):
 
 
 def get_cached_model_repos_info() -> list[huggingface_hub.CachedRepoInfo]:
-    hf_cache_info = huggingface_hub.scan_cache_dir()
+    try:
+        hf_cache_info = huggingface_hub.scan_cache_dir()
+    except huggingface_hub.errors.CacheNotFound:
+        return []
     cache_repos_info = [repo for repo in list(hf_cache_info.repos) if repo.repo_type == "model"]
     return cache_repos_info
 
@@ -177,7 +180,9 @@ def list_model_files(
     snapshots_path = repo_path / "snapshots"
     if not snapshots_path.exists():
         return None
-    yield from list(snapshots_path.glob(glob_pattern))
+    for snapshot_dir in snapshots_path.iterdir():
+        if snapshot_dir.is_dir():
+            yield from snapshot_dir.glob(glob_pattern)
 
 
 def delete_local_model_repo(model_id: str) -> None:
