@@ -191,10 +191,17 @@ rec {
     pname = "kaldi_native_fbank";
     version = "1.22.3";
     format = "wheel";
-    src = pkgs.fetchurl {
-      url = "https://files.pythonhosted.org/packages/84/90/01ef7331c52b1eaf9916f3f7a535155aac2e9e2ddad12a141613d92758c7/kaldi_native_fbank-1.22.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
-      hash = "sha256-8W50Ny/p4gq7QYP5io4iiNXuTEjQTZS2FgMRFw4AdmE=";
-    };
+    src =
+      if pyPackages.python.pythonVersion == "3.13" then
+        pkgs.fetchurl {
+          url = "https://files.pythonhosted.org/packages/bc/1e/496c7ae814b2a7f8f47d423dc33aae2cdfb1edf898e2faaf5c5b39b90363/kaldi_native_fbank-1.22.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
+          hash = "sha256-4/nGVR/1tq54XdFfgZw7K3Qy13v7eeqIBnSOLH2QC10=";
+        }
+      else
+        pkgs.fetchurl {
+          url = "https://files.pythonhosted.org/packages/84/90/01ef7331c52b1eaf9916f3f7a535155aac2e9e2ddad12a141613d92758c7/kaldi_native_fbank-1.22.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
+          hash = "sha256-8W50Ny/p4gq7QYP5io4iiNXuTEjQTZS2FgMRFw4AdmE=";
+        };
     propagatedBuildInputs = with pyPackages; [ numpy ];
     doCheck = false;
   };
