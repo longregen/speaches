@@ -184,17 +184,33 @@
     doCheck = false;
   };
 
-  kaldi_native_fbank = pyPackages.buildPythonPackage {
-    pname = "kaldi_native_fbank";
-    version = "1.22.3";
-    format = "wheel";
-    src = pkgs.fetchurl {
-      url = "https://files.pythonhosted.org/packages/84/90/01ef7331c52b1eaf9916f3f7a535155aac2e9e2ddad12a141613d92758c7/kaldi_native_fbank-1.22.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
-      hash = "sha256-8W50Ny/p4gq7QYP5io4iiNXuTEjQTZS2FgMRFw4AdmE=";
-    };
-    propagatedBuildInputs = with pyPackages; [numpy];
-    doCheck = false;
-  };
+  kaldi_native_fbank =
+    let
+      src =
+        if system == "x86_64-linux" then
+          pkgs.fetchurl {
+            url = "https://files.pythonhosted.org/packages/84/90/01ef7331c52b1eaf9916f3f7a535155aac2e9e2ddad12a141613d92758c7/kaldi_native_fbank-1.22.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
+            hash = "sha256-8W50Ny/p4gq7QYP5io4iiNXuTEjQTZS2FgMRFw4AdmE=";
+          }
+        else if system == "aarch64-linux" then
+          pkgs.fetchurl {
+            url = "https://files.pythonhosted.org/packages/43/28/6f4fd8953c0b3f30de4526fd024095032abcdc25b6736c77a891687c604e/kaldi_native_fbank-1.22.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl";
+            hash = "sha256-9aRLSoPPm/E9P3eFiSgGiwbT7CI4wn/y45OT+/d0nJ8=";
+          }
+        else
+          null;
+    in
+    if src == null then
+      null
+    else
+      pyPackages.buildPythonPackage {
+        pname = "kaldi_native_fbank";
+        version = "1.22.3";
+        format = "wheel";
+        inherit src;
+        propagatedBuildInputs = with pyPackages; [ numpy ];
+        doCheck = false;
+      };
 
   onnx_dl = pyPackages.buildPythonPackage {
     pname = "onnx_dl";
@@ -247,39 +263,60 @@
     doCheck = false;
   };
 
-  # Piper TTS packages (x86_64-linux only)
-  isLinuxX86 = system == "x86_64-linux";
-
   piper_phonemize =
-    if isLinuxX86
-    then
+    let
+      src =
+        if system == "x86_64-linux" then
+          pkgs.fetchurl {
+            url = "https://github.com/fedirz/piper-phonemize/raw/refs/heads/master/dist/piper_phonemize-1.2.0-cp312-cp312-manylinux_2_28_x86_64.whl";
+            hash = "sha256-E7/QdVBXIELF5t2NQAdr8kEBqTCvDHoSZUJyFydSJbM=";
+          }
+        else if system == "aarch64-linux" then
+          pkgs.fetchurl {
+            url = "https://github.com/fedirz/piper-phonemize/raw/refs/heads/master/dist/piper_phonemize-1.2.0-cp312-cp312-manylinux_2_28_aarch64.whl";
+            hash = "sha256-yPUnkHN6985spmC7M9lTmq7tBemkd89MtJCCuxQrzRM=";
+          }
+        else
+          null;
+    in
+    if src == null then
+      null
+    else
       pyPackages.buildPythonPackage {
         pname = "piper_phonemize";
         version = "1.2.0";
         format = "wheel";
-        src = pkgs.fetchurl {
-          url = "https://github.com/fedirz/piper-phonemize/raw/refs/heads/master/dist/piper_phonemize-1.2.0-cp312-cp312-manylinux_2_28_x86_64.whl";
-          hash = "sha256-E7/QdVBXIELF5t2NQAdr8kEBqTCvDHoSZUJyFydSJbM=";
-        };
+        src = src;
         doCheck = false;
-      }
-    else null;
+      };
 
   piper_tts =
-    if pkgs.stdenv.isLinux && isLinuxX86
-    then
+    let
+      src =
+        if system == "x86_64-linux" then
+          pkgs.fetchurl {
+            url = "https://files.pythonhosted.org/packages/2b/73/3d29175cfd93e791baaef3335819778d3f8c8898e2fe16cd0cc8b8163f84/piper_tts-1.3.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl";
+            hash = "sha256-I0wlR0ZVsm80GLhFIsgVxD6bG8ih/bE8KyhRQpDBZfA=";
+          }
+        else if system == "aarch64-linux" then
+          pkgs.fetchurl {
+            url = "https://files.pythonhosted.org/packages/8c/92/f37e5111440fc6c6336f42f8dab88afaa545394784dc930f808a68883c48/piper_tts-1.3.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.manylinux_2_28_aarch64.whl";
+            hash = "sha256-jTn4XD9Lat5RKXaElXk0T8cllexhPzdNvPhSFxY5iQc=";
+          }
+        else
+          null;
+    in
+    if src == null then
+      null
+    else
       pyPackages.buildPythonPackage {
         pname = "piper_tts";
         version = "1.3.0";
         format = "wheel";
-        src = pkgs.fetchurl {
-          url = "https://files.pythonhosted.org/packages/2b/73/3d29175cfd93e791baaef3335819778d3f8c8898e2fe16cd0cc8b8163f84/piper_tts-1.3.0-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl";
-          hash = "sha256-I0wlR0ZVsm80GLhFIsgVxD6bG8ih/bE8KyhRQpDBZfA=";
-        };
+        src = src;
         propagatedBuildInputs = [piper_phonemize];
         doCheck = false;
-      }
-    else null;
+      };
 
   # OpenTelemetry instrumentation packages
   opentelemetry_instrumentation_openai = pyPackages.buildPythonPackage {
