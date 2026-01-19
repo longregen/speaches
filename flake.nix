@@ -1,7 +1,7 @@
 {
   inputs = {
-    nixpkgs.url = "https://github.com/NixOS/nixpkgs";
-    flake-utils.url = "https://github.com/numtide/flake-utils";
+    nixpkgs.url = "github:NixOS/nixpkgs";
+    flake-utils.url = "github:numtide/flake-utils";
     nix-hug = {
       url = "github:longregen/nix-hug";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -17,6 +17,7 @@
   }:
     flake-utils.lib.eachDefaultSystem (
       system: let
+        isLinux = (system == "x86_64-linux" || system == "aarch64-linux");
         bundleHash = "sha256-Ml/SEWhJe8RJx0iYSnnLih3TWAY0TKqbyBeQ3o43+Zg=";
         mkOverlay = {
           pythonVersion,
@@ -32,7 +33,7 @@
         in {
           # Override ctranslate2 for CUDA support
           ctranslate2 =
-            if cudaSupport && system == "x86_64-linux"
+            if cudaSupport && isLinux
             then
               prev.ctranslate2.override {
                 stdenv = prev.gcc14Stdenv;
@@ -76,7 +77,7 @@
 
         mkSpeaches = {
           pythonVersion ? "python312",
-          withCuda ? (system == "x86_64-linux"),
+          withCuda ? isLinux,
           withDev ? false,
         }: let
           overlay = mkOverlay {
@@ -125,7 +126,7 @@
                   pythonPackages.onnx_diarization
                 ];
 
-              # Piper TTS dependencies (Linux x86_64 only)
+              # Piper TTS dependencies (Linux only)
               piperDeps = pkgs.lib.optionals (pythonPackages.piper_tts != null) [
                 pythonPackages.piper_tts
                 pythonPackages.piper_phonemize
@@ -457,7 +458,7 @@
                           opentelemetry_instrumentation_openai
                           opentelemetry_instrumentation_openai_v2
                         ]
-                        ++ lib.optionals stdenv.isLinux [
+                        ++ lib.optionals isLinux [
                           piper_tts
                           piper_phonemize
                         ]
@@ -476,7 +477,7 @@
               websocat
               basedpyright
             ]
-            ++ defaultPkgs.lib.optionals (system == "x86_64-linux") (
+            ++ defaultPkgs.lib.optionals final.stdenv.isLinux (
               with defaultPkgs; [
                 cudaPackages_12.cudnn
                 cudaPackages_12.libcublas
@@ -488,7 +489,7 @@
             );
 
           LD_LIBRARY_PATH =
-            defaultPkgs.lib.optionalString (system == "x86_64-linux")
+            defaultPkgs.lib.optionalString isLinux
             "/run/opengl-driver/lib:${
               defaultPkgs.lib.makeLibraryPath (
                 with defaultPkgs; [
