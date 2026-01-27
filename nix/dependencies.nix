@@ -293,6 +293,24 @@ rec {
       null;
 
   # OpenTelemetry instrumentation packages
+  opentelemetry_instrumentation_asyncio = pyPackages.buildPythonPackage {
+    pname = "opentelemetry_instrumentation_asyncio";
+    version = "0.60b1";
+    format = "wheel";
+    src = pkgs.fetchurl {
+      url = "https://files.pythonhosted.org/packages/fa/50/6be23a04742c69e53bfc417134ee0955d0572ce1540242023de73aa74e18/opentelemetry_instrumentation_asyncio-0.60b1-py3-none-any.whl";
+      hash = "sha256-nzJsaUeiPczAKgerQysMYrYr9zEqdgjDh3EBQhcZkxY=";
+    };
+    propagatedBuildInputs = with pyPackages; [
+      opentelemetry-api
+      opentelemetry-instrumentation
+      wrapt
+    ];
+    doCheck = false;
+    dontCheckRuntimeDeps = true;
+    pythonImportsCheck = [ ];
+  };
+
   opentelemetry_instrumentation_openai = pyPackages.buildPythonPackage {
     pname = "opentelemetry_instrumentation_openai";
     version = "0.37.1";

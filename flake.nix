@@ -9,57 +9,61 @@
     };
   };
 
-  outputs = {
-    nixpkgs,
-    flake-utils,
-    nix-hug,
-    ...
-  }:
+  outputs =
+    {
+      nixpkgs,
+      flake-utils,
+      nix-hug,
+      ...
+    }:
     flake-utils.lib.eachDefaultSystem (
-      system: let
-        mkOverlay = {
-          pythonVersion,
-          cudaSupport ? true,
-        }: final: prev: let
-          pyPackages = prev."${pythonVersion}Packages";
+      system:
+      let
+        mkOverlay =
+          {
+            pythonVersion,
+            cudaSupport ? true,
+          }:
+          final: prev:
+          let
+            pyPackages = prev."${pythonVersion}Packages";
 
-          # Import all custom dependencies (including piper and otel)
-          customDeps = import ./nix/dependencies.nix {
-            pkgs = final;
-            inherit pyPackages system;
-          };
-        in {
-          # Override ctranslate2 for CUDA support
-          ctranslate2 =
-            if cudaSupport && system == "x86_64-linux"
-            then
-              prev.ctranslate2.override {
-                stdenv = prev.gcc14Stdenv;
-                withCUDA = true;
-                withCuDNN = true;
-                cudaPackages = prev.cudaPackages_12;
-              }
-            else prev.ctranslate2;
+            # Import all custom dependencies (including piper and otel)
+            customDeps = import ./nix/dependencies.nix {
+              pkgs = final;
+              inherit pyPackages system;
+            };
+          in
+          {
+            # Override ctranslate2 for CUDA support
+            ctranslate2 =
+              if cudaSupport && system == "x86_64-linux" then
+                prev.ctranslate2.override {
+                  stdenv = prev.gcc14Stdenv;
+                  withCUDA = true;
+                  withCuDNN = true;
+                  cudaPackages = prev.cudaPackages_12;
+                }
+              else
+                prev.ctranslate2;
 
-          # Silero VAD assets (bundled with faster-whisper source but may be missing in Nix build)
-          silero-encoder-v5 = prev.fetchurl {
-            url = "https://github.com/SYSTRAN/faster-whisper/raw/v1.1.0/faster_whisper/assets/silero_encoder_v5.onnx";
-            hash = "sha256-Dp/I9WQHaT0oP5kEX7lcK5D9yjQzzl+D4sEh+05hUHU=";
-          };
-          silero-decoder-v5 = prev.fetchurl {
-            url = "https://github.com/SYSTRAN/faster-whisper/raw/v1.1.0/faster_whisper/assets/silero_decoder_v5.onnx";
-            hash = "sha256-jCA0T1CYRqB8zYWCfohXAX+uZ/q9WGib7Br3nh1Igwc=";
-          };
+            # Silero VAD assets (bundled with faster-whisper source but may be missing in Nix build)
+            silero-encoder-v5 = prev.fetchurl {
+              url = "https://github.com/SYSTRAN/faster-whisper/raw/v1.1.0/faster_whisper/assets/silero_encoder_v5.onnx";
+              hash = "sha256-Dp/I9WQHaT0oP5kEX7lcK5D9yjQzzl+D4sEh+05hUHU=";
+            };
+            silero-decoder-v5 = prev.fetchurl {
+              url = "https://github.com/SYSTRAN/faster-whisper/raw/v1.1.0/faster_whisper/assets/silero_decoder_v5.onnx";
+              hash = "sha256-jCA0T1CYRqB8zYWCfohXAX+uZ/q9WGib7Br3nh1Igwc=";
+            };
 
-          "${pythonVersion}Packages" =
-            pyPackages
-            // {
-              # Override faster-whisper to use our ctranslate2 and ensure silero assets exist
-              faster-whisper = pyPackages.faster-whisper.overrideAttrs (old: {
-                propagatedBuildInputs = old.propagatedBuildInputs ++ [final.ctranslate2];
-                postInstall =
-                  (old.postInstall or "")
-                  + ''
+            "${pythonVersion}Packages" =
+              pyPackages
+              // {
+                # Override faster-whisper to use our ctranslate2 and ensure silero assets exist
+                faster-whisper = pyPackages.faster-whisper.overrideAttrs (old: {
+                  propagatedBuildInputs = old.propagatedBuildInputs ++ [ final.ctranslate2 ];
+                  postInstall = (old.postInstall or "") + ''
                     # Copy silero VAD assets if they don't exist
                     assets_dir="$out/${pyPackages.python.sitePackages}/faster_whisper/assets"
                     mkdir -p "$assets_dir"
@@ -68,36 +72,38 @@
                       cp ${final.silero-decoder-v5} "$assets_dir/silero_decoder_v5.onnx"
                     fi
                   '';
-              });
-            }
-            // customDeps;
-        };
-
-        mkSpeaches = {
-          pythonVersion ? "python312",
-          withCuda ? (system == "x86_64-linux"),
-          withDev ? false,
-        }: let
-          overlay = mkOverlay {
-            inherit pythonVersion;
-            cudaSupport = withCuda;
+                });
+              }
+              // customDeps;
           };
 
-          pkgs = import nixpkgs {
-            inherit system;
-            config.allowUnfree = true;
-            overlays = [overlay];
-          };
+        mkSpeaches =
+          {
+            pythonVersion ? "python312",
+            withCuda ? (system == "x86_64-linux"),
+            withDev ? false,
+          }:
+          let
+            overlay = mkOverlay {
+              inherit pythonVersion;
+              cudaSupport = withCuda;
+            };
 
-          python = pkgs.${pythonVersion};
-          pythonPackages = pkgs."${pythonVersion}Packages";
+            pkgs = import nixpkgs {
+              inherit system;
+              config.allowUnfree = true;
+              overlays = [ overlay ];
+            };
 
-          # Python environment with configurable dependencies
-          pythonEnv = python.withPackages (
-            ps: let
-              # Core dependencies - always included
-              coreDeps =
-                [
+            python = pkgs.${pythonVersion};
+            pythonPackages = pkgs."${pythonVersion}Packages";
+
+            # Python environment with configurable dependencies
+            pythonEnv = python.withPackages (
+              ps:
+              let
+                # Core dependencies - always included
+                coreDeps = [
                   ps.fastapi
                   ps.huggingface-hub
                   ps.numpy
@@ -124,69 +130,70 @@
                   pythonPackages.onnx_diarization
                 ];
 
-              # Piper TTS dependencies (Linux x86_64 only)
-              piperDeps = pkgs.lib.optionals (pythonPackages.piper_tts != null) [
-                pythonPackages.piper_tts
-                pythonPackages.piper_phonemize
-              ];
+                # Piper TTS dependencies (Linux x86_64 only)
+                piperDeps = pkgs.lib.optionals (pythonPackages.piper_tts != null) [
+                  pythonPackages.piper_tts
+                  pythonPackages.piper_phonemize
+                ];
 
-              # Development dependencies
-              devDeps = pkgs.lib.optionals withDev [
-                ps.anyio
-                ps.pytest-asyncio
-                ps.pytest
-                ps.pytest-mock
-                ps.ruff
-                pythonPackages.pytest_antilru
-              ];
+                # Development dependencies
+                devDeps = pkgs.lib.optionals withDev [
+                  ps.anyio
+                  ps.pytest-asyncio
+                  ps.pytest
+                  ps.pytest-mock
+                  ps.ruff
+                  pythonPackages.pytest_antilru
+                ];
 
-              # OpenTelemetry dependencies (always included)
-              otelDeps = [
-                ps.opentelemetry-api
-                ps.opentelemetry-sdk
-                ps.opentelemetry-exporter-otlp
-                ps.opentelemetry-instrumentation
-                ps.opentelemetry-instrumentation-asgi
-                ps.opentelemetry-instrumentation-fastapi
-                ps.opentelemetry-instrumentation-httpx
-                ps.opentelemetry-instrumentation-logging
-                ps.opentelemetry-instrumentation-grpc
-                pythonPackages.opentelemetry_instrumentation_openai
-                pythonPackages.opentelemetry_instrumentation_openai_v2
-              ];
-            in
+                # OpenTelemetry dependencies (always included)
+                otelDeps = [
+                  ps.opentelemetry-api
+                  ps.opentelemetry-sdk
+                  ps.opentelemetry-exporter-otlp
+                  ps.opentelemetry-instrumentation
+                  ps.opentelemetry-instrumentation-asgi
+                  ps.opentelemetry-instrumentation-fastapi
+                  ps.opentelemetry-instrumentation-httpx
+                  ps.opentelemetry-instrumentation-logging
+                  ps.opentelemetry-instrumentation-grpc
+                  pythonPackages.opentelemetry_instrumentation_asyncio
+                  pythonPackages.opentelemetry_instrumentation_openai
+                  pythonPackages.opentelemetry_instrumentation_openai_v2
+                ];
+              in
               coreDeps ++ piperDeps ++ devDeps ++ otelDeps
-          );
-        in
+            );
+          in
           pkgs.stdenv.mkDerivation rec {
             pname = "speaches";
             version = "0.1.0";
 
             src = pkgs.lib.cleanSource ./.;
 
-            nativeBuildInputs = [pkgs.makeWrapper] ++ pkgs.lib.optionals withDev [pkgs.basedpyright];
+            nativeBuildInputs = [ pkgs.makeWrapper ] ++ pkgs.lib.optionals withDev [ pkgs.basedpyright ];
 
-            buildInputs =
+            buildInputs = [
+              pythonEnv
+              pkgs.ffmpeg-full
+              pkgs.portaudio
+              pkgs.openssl
+              pkgs.zlib
+              pkgs.stdenv.cc.cc
+              pkgs.ctranslate2
+              pkgs.espeak-ng
+            ]
+            ++ pkgs.lib.optionals withCuda (
+              with pkgs;
               [
-                pythonEnv
-                pkgs.ffmpeg-full
-                pkgs.portaudio
-                pkgs.openssl
-                pkgs.zlib
-                pkgs.stdenv.cc.cc
-                pkgs.ctranslate2
-                pkgs.espeak-ng
+                cudaPackages_12.cudnn
+                cudaPackages_12.libcublas
+                cudaPackages_12.libcurand
+                cudaPackages_12.libcufft
+                cudaPackages_12.cuda_cudart
+                cudaPackages_12.cuda_nvrtc
               ]
-              ++ pkgs.lib.optionals withCuda (
-                with pkgs; [
-                  cudaPackages_12.cudnn
-                  cudaPackages_12.libcublas
-                  cudaPackages_12.libcurand
-                  cudaPackages_12.libcufft
-                  cudaPackages_12.cuda_cudart
-                  cudaPackages_12.cuda_nvrtc
-                ]
-              );
+            );
 
             installPhase = ''
               mkdir -p $out/share/speaches
@@ -199,12 +206,12 @@
               mkdir -p $out/bin
               makeWrapper ${pythonEnv}/bin/python $out/bin/speaches \
                 --prefix PATH : ${
-                pkgs.lib.makeBinPath [
-                  pkgs.ffmpeg-full
-                  pkgs.espeak-ng
-                ]
-              } \
-                --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [pkgs.espeak-ng]} \
+                  pkgs.lib.makeBinPath [
+                    pkgs.ffmpeg-full
+                    pkgs.espeak-ng
+                  ]
+                } \
+                --prefix LD_LIBRARY_PATH : ${pkgs.lib.makeLibraryPath [ pkgs.espeak-ng ]} \
                 ${pkgs.lib.optionalString withCuda "--prefix LD_LIBRARY_PATH : /run/opengl-driver/lib:${pkgs.lib.makeLibraryPath buildInputs}"} \
                 --set PYTHONPATH "$out/share/speaches/src" \
                 --chdir "$out/share/speaches" \
@@ -240,107 +247,170 @@
           kokoro-82m = nix-hug.lib.${system}.fetchModel {
             url = "speaches-ai/Kokoro-82M-v1.0-ONNX";
             rev = "main";
-            repoInfoHash = "sha256-P7rmAJQypOSIUAkslkBGgMfrPsIFuSwAdWLv008Dm3A=";
-            fileTreeHash = "sha256-hXNCSRONwD1gexFw01XrTME07GctuM7DprqZP5HUdZg=";
-            derivationHash = "sha256-N/Up67cGHFjnMspF3ZN1rqaVUFyXIm1r3cBAe/REjLk=";
+            repoInfoHash = "sha256-+eumCsNLTigie1h/syJwzPnF2KR7BAgHvJnmBRQYa20=";
+            fileTreeHash = "sha256-+Aea1c28vvS+pfOs2alshOajGzW6I7ujDVIIAQ5KlgI=";
+            derivationHash = "sha256-v2BsX7lfzzytuLSTEpJccHHAyG09dzvTsF9pXYBSZOs=";
           };
 
           # Silero VAD model (voice activity detection)
           silero-vad = nix-hug.lib.${system}.fetchModel {
             url = "onnx-community/silero-vad";
             rev = "main";
-            repoInfoHash = "sha256-cAlWpNfu5fyFMhoBzSHZNcHBtt6prwl6D2ziIC4Eyqk=";
+            repoInfoHash = "sha256-nncF0+GwO1HGepLOA/DgyHZ/SZRj8aKoPjt8uEcm8V4=";
             fileTreeHash = "sha256-f+/9fy13zID9i5mv7FwdwCs0oQskWJlJ7TK3VjOVI4A=";
-            derivationHash = "sha256-fSB/IPRY/kwKuduqNUC+M81V0WSOk8gvBrTcZjajOk8=";
+            derivationHash = "sha256-VsvDtF6TC3ZtlvU+h6VvS1X1MlSFZZCXRgBmTfcHemE=";
           };
 
-          # Whisper STT model (base version for lower RAM usage)
+          # Whisper STT model (base version for testing)
           whisper-base = nix-hug.lib.${system}.fetchModel {
             url = "Systran/faster-whisper-base";
             rev = "main";
-
-            repoInfoHash = "sha256-zhznrww8E53KcCpXhWZyc2SMCEpt1MOSWhSo/64cBwk=";
+            repoInfoHash = "sha256-h3VLrDJBiiexmJQnqthMa1YHmZ4cjGGNw/Z2O7SF5T8=";
             fileTreeHash = "sha256-GYgT6udNwSgjZabqajK/i8kL3pvRPbaTC2PQdUfH0EY=";
-            derivationHash = "sha256-v++FuGYz0fimIn7zp1oadS2FvdpNZINrJb3YAOmrVhs=";
+            derivationHash = "sha256-fXdZe5894UG7CDD7wZqQeBlZIKcG899hXURSpnSRdVg=";
+          };
+
+          # Whisper STT model (large-v3 for best accuracy)
+          whisper-large-v3 = nix-hug.lib.${system}.fetchModel {
+            url = "Systran/faster-whisper-large-v3";
+            rev = "main";
+            repoInfoHash = "sha256-JG/BKuHd48owLnBAQC9Kmih3fB1xywEkDwyzfJ+QBDs=";
+            fileTreeHash = "sha256-c9h9wTwY4rwwzFPAUilsKrhn+o8YqGudZJ/ZwOKnHmg=";
+            derivationHash = "sha256-NOVS33nXZ04A+S95bxd7z6IB7Lrm5FShv+Sc4a71Gnk=";
+          };
+
+          # Multilingual E5 embedding model
+          multilingual-e5-large = nix-hug.lib.${system}.fetchModel {
+            url = "intfloat/multilingual-e5-large-instruct";
+            rev = "main";
+            repoInfoHash = "sha256-W6ywudcB1I7yd60LTlGtHup8am59dPAmOuZyk4hMo9g=";
+            fileTreeHash = "sha256-cCAGFCDddzZdHYBdwTWTjHXZ6HJXtvVAT/BkNKnz4z0=";
+            derivationHash = "sha256-hRFlTAcBtrgC5MnQzPnRZhr+LdAS96mlHX9t+njfAUM=";
+          };
+
+          # Qwen3 8B AWQ quantized model
+          qwen3-8b-awq = nix-hug.lib.${system}.fetchModel {
+            url = "Orion-zhen/Qwen3-8B-AWQ";
+            rev = "main";
+            repoInfoHash = "sha256-rrlR211hYI7uOklDxCSEwbu+m1P9KmoeweZq4lzg+Z8=";
+            fileTreeHash = "sha256-C/Cu3FE5+43vLse0qZqbvIwL31DcbbE6M8ocGA4qo/A=";
+            derivationHash = "sha256-XbSRLekUFe3/97IBJSG+V+J5BWU0VOJEC6Opxs359UI=";
           };
         };
 
         # Package variants
-        speaches = mkSpeaches {};
-        speaches-cpu = mkSpeaches {withCuda = false;};
-        speaches-minimal = mkSpeaches {withCuda = false;};
-        speaches-dev = mkSpeaches {withDev = true;};
+        speaches = mkSpeaches { };
+        speaches-cpu = mkSpeaches { withCuda = false; };
+        speaches-minimal = mkSpeaches { withCuda = false; };
+        speaches-dev = mkSpeaches { withDev = true; };
 
         # Parameterized e2e test function
-        mkE2eTest = {
-          pythonVersion,
-          fullTest ? true,
-        }: let
-          testPackage = mkSpeaches {
-            inherit pythonVersion;
-            withCuda = false;
-          };
-          testModelCache = nix-hug.lib.${system}.buildCache {
-            models = [
-              models.kokoro-82m
-              models.silero-vad
-              models.whisper-base
-            ];
-            hash = "sha256-DC3pkqznsXUIbZz8pNkldIH3z5O4uMKQ0IbMBU+HzLM=";
-          };
-        in
+        mkE2eTest =
+          {
+            pythonVersion,
+            fullTest ? true,
+          }:
+          let
+            testPackage = mkSpeaches {
+              inherit pythonVersion;
+              withCuda = false;
+            };
+            testModelCache = nix-hug.lib.${system}.buildCache {
+              models = [
+                models.kokoro-82m
+                models.silero-vad
+                models.whisper-base
+              ];
+              hash = "sha256-BTjGD6PQOK0ZNs7evv9Iwq0ptG8GmFHfxQ+QaBXNkSM=";
+            };
+            otelCollectorConfig = defaultPkgs.writeText "otel-collector-config.yaml" ''
+              receivers:
+                otlp:
+                  protocols:
+                    grpc:
+                      endpoint: 0.0.0.0:4317
+              exporters:
+                debug:
+                  verbosity: basic
+              service:
+                pipelines:
+                  traces:
+                    receivers: [otlp]
+                    exporters: [debug]
+                  metrics:
+                    receivers: [otlp]
+                    exporters: [debug]
+                  logs:
+                    receivers: [otlp]
+                    exporters: [debug]
+            '';
+          in
           defaultPkgs.testers.nixosTest {
             name = "speaches-e2e-test-${pythonVersion}";
             enableOCR = false;
 
-            nodes.machine = {
-              config,
-              pkgs,
-              ...
-            }: {
-              imports = [./nix/module.nix];
+            nodes.machine =
+              {
+                config,
+                pkgs,
+                ...
+              }:
+              {
+                imports = [ ./nix/module.nix ];
 
-              environment.variables = {
-                HF_HUB_CACHE = "${testModelCache}/hub";
-                HF_HUB_OFFLINE = "1";
-              };
-
-              services.speaches = {
-                enable = true;
-                package = testPackage;
-                host = "127.0.0.1";
-                port = 18000;
-                environment = {
-                  SPEACHES_WHISPER_MODEL = "Systran/faster-whisper-base";
+                environment.variables = {
                   HF_HUB_CACHE = "${testModelCache}/hub";
                   HF_HUB_OFFLINE = "1";
                 };
-              };
 
-              environment.systemPackages = with pkgs;
-                [
-                  curl
-                  jq
-                  file
-                ]
-                ++ (
-                  if fullTest
-                  then [
-                    sox
-                    ffmpeg-full
+                services.speaches = {
+                  enable = true;
+                  package = testPackage;
+                  host = "127.0.0.1";
+                  port = 18000;
+                  environment = {
+                    SPEACHES_WHISPER_MODEL = "Systran/faster-whisper-base";
+                    HF_HUB_CACHE = "${testModelCache}/hub";
+                    HF_HUB_OFFLINE = "1";
+                    OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4317";
+                  };
+                };
+
+                systemd.services.otel-collector = {
+                  description = "OpenTelemetry Collector";
+                  after = [ "network.target" ];
+                  wantedBy = [ "multi-user.target" ];
+                  serviceConfig = {
+                    ExecStart = "${pkgs.opentelemetry-collector-contrib}/bin/otelcol-contrib --config ${otelCollectorConfig}";
+                    Restart = "on-failure";
+                  };
+                };
+
+                environment.systemPackages =
+                  with pkgs;
+                  [
+                    curl
+                    jq
+                    file
                   ]
-                  else []
-                );
+                  ++ (
+                    if fullTest then
+                      [
+                        sox
+                        ffmpeg-full
+                      ]
+                    else
+                      [ ]
+                  );
 
-              virtualisation = {
-                memorySize = 4096;
-                cores = 2;
+                virtualisation = {
+                  memorySize = 4096;
+                  cores = 2;
+                };
               };
-            };
 
             testScript =
-              if fullTest
-              then
+              if fullTest then
                 # Full test with TTS→STT pipeline
                 ''
                   import json
@@ -398,6 +468,18 @@
                   assert len(transcribed_text) > 0
                   assert any(word in transcribed_text.lower() for word in ["people", "assume", "viewpoint", "cause"])
 
+                  print("Testing OpenTelemetry integration...")
+                  machine.wait_for_unit("otel-collector.service")
+                  machine.wait_for_open_port(4317)
+
+                  # The previous API requests should have generated telemetry.
+                  # Wait for the batch exporter to flush.
+                  time.sleep(10)
+
+                  otel_logs = machine.succeed("journalctl -u otel-collector.service --no-pager")
+                  assert "TracesExporter" in otel_logs, f"No traces found in collector logs:\n{otel_logs[-500:]}"
+                  print("OpenTelemetry traces received by collector!")
+
                   print("All tests passed successfully!")
                 ''
               else
@@ -411,56 +493,58 @@
                   print("${pythonVersion} e2e test passed!")
                 '';
           };
-      in {
+      in
+      {
         # Development shell
         devShells.default = defaultPkgs.mkShell {
-          nativeBuildInputs = with defaultPkgs;
+          nativeBuildInputs =
+            with defaultPkgs;
             [
               (python312.withPackages (
                 ps:
-                  with ps;
-                    [
-                      # Include all deps including dev for development shell
-                      fastapi
-                      huggingface-hub
-                      numpy
-                      pydantic
-                      pydantic-settings
-                      python-multipart
-                      sounddevice
-                      soundfile
-                      uvicorn
-                      openai
-                      aiostream
-                      cachetools
-                      gradio
-                      httpx
-                      httpx-sse
-                      httpx-ws
-                      faster-whisper
-                      anyio
-                      pytest-asyncio
-                      pytest
-                      pytest-mock
-                      ruff
-                    ]
-                    ++ (
-                      with defaultPkgs.python312Packages;
-                        [
-                          # Custom packages from overlay
-                          kokoro_onnx
-                          aiortc
-                          onnx_asr
-                          espeakng_loader
-                          pytest_antilru
-                          opentelemetry_instrumentation_openai
-                          opentelemetry_instrumentation_openai_v2
-                        ]
-                        ++ lib.optionals stdenv.isLinux [
-                          piper_tts
-                          piper_phonemize
-                        ]
-                    )
+                with ps;
+                [
+                  # Include all deps including dev for development shell
+                  fastapi
+                  huggingface-hub
+                  numpy
+                  pydantic
+                  pydantic-settings
+                  python-multipart
+                  sounddevice
+                  soundfile
+                  uvicorn
+                  openai
+                  aiostream
+                  cachetools
+                  gradio
+                  httpx
+                  httpx-sse
+                  httpx-ws
+                  faster-whisper
+                  anyio
+                  pytest-asyncio
+                  pytest
+                  pytest-mock
+                  ruff
+                ]
+                ++ (
+                  with defaultPkgs.python312Packages;
+                  [
+                    # Custom packages from overlay
+                    kokoro_onnx
+                    aiortc
+                    onnx_asr
+                    espeakng_loader
+                    pytest_antilru
+                    opentelemetry_instrumentation_openai
+                    opentelemetry_instrumentation_openai_v2
+                  ]
+                  ++ lib.optionals stdenv.isLinux [
+                    piper_tts
+                    piper_phonemize
+                  ]
+                )
               ))
               uv
               ffmpeg-full
@@ -476,7 +560,8 @@
               basedpyright
             ]
             ++ defaultPkgs.lib.optionals (system == "x86_64-linux") (
-              with defaultPkgs; [
+              with defaultPkgs;
+              [
                 cudaPackages_12.cudnn
                 cudaPackages_12.libcublas
                 cudaPackages_12.libcurand
@@ -488,22 +573,23 @@
 
           LD_LIBRARY_PATH =
             defaultPkgs.lib.optionalString (system == "x86_64-linux")
-            "/run/opengl-driver/lib:${
-              defaultPkgs.lib.makeLibraryPath (
-                with defaultPkgs; [
-                  cudaPackages_12.cudnn
-                  cudaPackages_12.libcublas
-                  cudaPackages_12.libcurand
-                  cudaPackages_12.libcufft
-                  cudaPackages_12.cuda_cudart
-                  cudaPackages_12.cuda_nvrtc
-                  portaudio
-                  zlib
-                  stdenv.cc.cc
-                  openssl
-                ]
-              )
-            }";
+              "/run/opengl-driver/lib:${
+                defaultPkgs.lib.makeLibraryPath (
+                  with defaultPkgs;
+                  [
+                    cudaPackages_12.cudnn
+                    cudaPackages_12.libcublas
+                    cudaPackages_12.libcurand
+                    cudaPackages_12.libcufft
+                    cudaPackages_12.cuda_cudart
+                    cudaPackages_12.cuda_nvrtc
+                    portaudio
+                    zlib
+                    stdenv.cc.cc
+                    openssl
+                  ]
+                )
+              }";
 
           shellHook = ''
             source .venv/bin/activate 2>/dev/null || true
@@ -522,7 +608,12 @@
             ;
 
           # Models
-          inherit (models) kokoro-82m silero-vad whisper-base;
+          inherit (models)
+            kokoro-82m
+            silero-vad
+            whisper-base
+            whisper-large-v3
+            ;
 
           # Build a proper HuggingFace cache with all models
           model-cache = nix-hug.lib.${system}.buildCache {
@@ -531,7 +622,7 @@
               models.silero-vad
               models.whisper-base
             ];
-            hash = "sha256-DC3pkqznsXUIbZz8pNkldIH3z5O4uMKQ0IbMBU+HzLM=";
+            hash = "sha256-BTjGD6PQOK0ZNs7evv9Iwq0ptG8GmFHfxQ+QaBXNkSM=";
           };
 
           # End-to-end test package with actual models
@@ -549,7 +640,7 @@
                   models.silero-vad
                   models.whisper-base
                 ];
-                hash = "sha256-DC3pkqznsXUIbZz8pNkldIH3z5O4uMKQ0IbMBU+HzLM=";
+                hash = "sha256-BTjGD6PQOK0ZNs7evv9Iwq0ptG8GmFHfxQ+QaBXNkSM=";
               }
             }"
             export HF_HUB_CACHE="$MODEL_CACHE/hub"
@@ -687,7 +778,7 @@
           program = "${speaches}/bin/speaches";
           meta = {
             description = "AI-powered speech processing application";
-            maintainers = ["longregen <claude@infophysics.org>"];
+            maintainers = [ "longregen <claude@infophysics.org>" ];
           };
         };
 
@@ -695,15 +786,17 @@
         nixosModules.default = import ./nix/module.nix;
 
         # NixOS tests
-        checks = let
-          e2e-python312 = mkE2eTest {pythonVersion = "python312";};
-        in {
-          inherit e2e-python312;
-          e2e = e2e-python312; # default alias
-          e2e-python313 = mkE2eTest {pythonVersion = "python313";};
-          e2e-python314 = mkE2eTest {pythonVersion = "python314";};
-          e2e-python315 = mkE2eTest {pythonVersion = "python315";};
-        };
+        checks =
+          let
+            e2e-python312 = mkE2eTest { pythonVersion = "python312"; };
+          in
+          {
+            inherit e2e-python312;
+            e2e = e2e-python312; # default alias
+            e2e-python313 = mkE2eTest { pythonVersion = "python313"; };
+            e2e-python314 = mkE2eTest { pythonVersion = "python314"; };
+            e2e-python315 = mkE2eTest { pythonVersion = "python315"; };
+          };
 
         formatter = defaultPkgs.nixfmt-rfc-style;
       }
