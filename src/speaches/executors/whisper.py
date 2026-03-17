@@ -20,7 +20,7 @@ from speaches.executors.shared.handler_protocol import (  # noqa: TC001
     TranslationRequest,
     TranslationResponse,
 )
-from speaches.executors.silero_vad_v5 import merge_segments
+from speaches.executors.silero_vad_v5 import SAMPLE_RATE, SpeechTimestamp, VadOptions, merge_segments
 from speaches.hf_utils import (
     HfModelFilter,
     extract_language_list,
@@ -44,6 +44,17 @@ if TYPE_CHECKING:
 
 LIBRARY_NAME = "ctranslate2"
 TASK_NAME_TAG = "automatic-speech-recognition"
+
+
+def build_clip_timestamps(
+    speech_segments: list[SpeechTimestamp],
+    vad_options: VadOptions,
+) -> list[dict[str, float]] | None:
+    if not speech_segments:
+        return None
+    merged = merge_segments(speech_segments, vad_options)
+    return [{"start": seg["start"] / SAMPLE_RATE, "end": seg["end"] / SAMPLE_RATE} for seg in merged]
+
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -138,6 +149,9 @@ class WhisperModelManager(BaseModelManager[WhisperModel]):
             compute_type=self.whisper_config.compute_type,
             cpu_threads=self.whisper_config.cpu_threads,
             num_workers=self.whisper_config.num_workers,
+            flash_attention=self.whisper_config.flash_attention,
+            max_queued_batches=self.whisper_config.max_queued_batches,
+            tensor_parallel=self.whisper_config.tensor_parallel,
         )
 
     @traced()
@@ -154,10 +168,7 @@ class WhisperModelManager(BaseModelManager[WhisperModel]):
         with self.load_model(request.model) as whisper:
             whisper_model = BatchedInferencePipeline(model=whisper)
 
-            clip_timestamps = merge_segments(
-                request.speech_segments,
-                request.vad_options,
-            )
+            clip_timestamps = build_clip_timestamps(request.speech_segments, request.vad_options)
             segments, transcription_info = whisper_model.transcribe(
                 request.audio.data,
                 task="transcribe",
@@ -166,7 +177,7 @@ class WhisperModelManager(BaseModelManager[WhisperModel]):
                 word_timestamps="word" in request.timestamp_granularities,
                 temperature=request.temperature,
                 vad_filter=False,
-                clip_timestamps=clip_timestamps,  # pyright: ignore[reportArgumentType]
+                clip_timestamps=clip_timestamps,
                 hotwords=request.hotwords,
                 without_timestamps=request.without_timestamps,
             )
@@ -193,10 +204,7 @@ class WhisperModelManager(BaseModelManager[WhisperModel]):
         with self.load_model(request.model) as whisper:
             whisper_model = BatchedInferencePipeline(model=whisper)
 
-            clip_timestamps = merge_segments(
-                request.speech_segments,
-                request.vad_options,
-            )
+            clip_timestamps = build_clip_timestamps(request.speech_segments, request.vad_options)
             segments, _transcription_info = whisper_model.transcribe(
                 request.audio.data,
                 task="transcribe",
@@ -205,18 +213,20 @@ class WhisperModelManager(BaseModelManager[WhisperModel]):
                 word_timestamps="word" in request.timestamp_granularities,
                 temperature=request.temperature,
                 vad_filter=False,
-                clip_timestamps=clip_timestamps,  # pyright: ignore[reportArgumentType]
+                clip_timestamps=clip_timestamps,
                 hotwords=request.hotwords,
                 without_timestamps=request.without_timestamps,
             )
 
+            all_text = []
             for segment in segments:
+                all_text.append(segment.text)
                 yield openai.types.audio.TranscriptionTextDeltaEvent(
                     type="transcript.text.delta", delta=segment.text, logprobs=None
                 )
 
             yield openai.types.audio.TranscriptionTextDoneEvent(
-                type="transcript.text.done", text="".join(segment.text for segment in segments), logprobs=None
+                type="transcript.text.done", text="".join(all_text), logprobs=None
             )
         logger.info(
             f"Transcribed {request.audio.duration} seconds of audio in {time.perf_counter() - timelog_start} seconds"
