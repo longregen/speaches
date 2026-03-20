@@ -95,7 +95,7 @@ class SelfDisposingModel[T]:
                     logger.info(f"Model {self.model_id} is idle, unloading immediately")
                     self.unload()
                 else:
-                    logger.info(f"Model {self.model_id} is idle, not unloading")
+                    logger.debug(f"Model {self.model_id} is idle, not unloading")
 
     def __enter__(self) -> T:
         with self.rlock:
