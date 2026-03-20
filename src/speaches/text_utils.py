@@ -134,25 +134,25 @@ class SentenceChunker:
                 await self._new_token_event.wait()
 
 
-def strip_emojis(text: str) -> str:
-    # Get all emoji unicode characters
-    emoji_pattern = re.compile(
-        "["
-        "\U0001f600-\U0001f64f"  # emoticons
-        "\U0001f300-\U0001f5ff"  # symbols & pictographs
-        "\U0001f680-\U0001f6ff"  # transport & map symbols
-        "\U0001f700-\U0001f77f"  # alchemical symbols
-        "\U0001f780-\U0001f7ff"  # Geometric Shapes
-        "\U0001f800-\U0001f8ff"  # Supplemental Arrows-C
-        "\U0001f900-\U0001f9ff"  # Supplemental Symbols and Pictographs
-        "\U0001fa00-\U0001fa6f"  # Chess Symbols
-        "\U0001fa70-\U0001faff"  # Symbols and Pictographs Extended-A
-        "\U00002702-\U000027b0"  # Dingbats
-        "]+",
-        flags=re.UNICODE,
-    )
+_EMOJI_PATTERN = re.compile(
+    "["
+    "\U0001f600-\U0001f64f"  # emoticons
+    "\U0001f300-\U0001f5ff"  # symbols & pictographs
+    "\U0001f680-\U0001f6ff"  # transport & map symbols
+    "\U0001f700-\U0001f77f"  # alchemical symbols
+    "\U0001f780-\U0001f7ff"  # Geometric Shapes
+    "\U0001f800-\U0001f8ff"  # Supplemental Arrows-C
+    "\U0001f900-\U0001f9ff"  # Supplemental Symbols and Pictographs
+    "\U0001fa00-\U0001fa6f"  # Chess Symbols
+    "\U0001fa70-\U0001faff"  # Symbols and Pictographs Extended-A
+    "\U00002702-\U000027b0"  # Dingbats
+    "]+",
+    flags=re.UNICODE,
+)
 
-    return emoji_pattern.sub(r"", text)
+
+def strip_emojis(text: str) -> str:
+    return _EMOJI_PATTERN.sub(r"", text)
 
 
 def strip_markdown_emphasis(text: str) -> str:
@@ -175,6 +175,13 @@ def strip_markdown_emphasis(text: str) -> str:
     text = re.sub(r"_(.*?)_", r"\1", text)
 
     return text
+
+
+def clean_for_tts(text: str) -> str:
+    text = text.strip()
+    text = strip_markdown_emphasis(text)
+    text = strip_emojis(text)
+    return text.strip()
 
 
 class EOFTextChunker:
