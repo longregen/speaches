@@ -22,13 +22,13 @@ from fastapi import (
     Response,
 )
 import numpy as np
-from openai import AsyncOpenAI
 from openai.types.beta.realtime.error_event import Error
 from pydantic import ValidationError
 
 from speaches.dependencies import (
-    ConfigDependency,
+    CompletionClientDependency,
     ExecutorRegistryDependency,
+    SpeechClientDependency,
     TranscriptionClientDependency,
 )
 from speaches.realtime.context import SessionContext
@@ -260,18 +260,15 @@ def track_handler(ctx: SessionContext, track: RemoteStreamTrack) -> None:
 async def realtime_webrtc(
     request: Request,
     model: Annotated[str, Query(...)],
-    config: ConfigDependency,
+    completion_client: CompletionClientDependency,
+    speech_client: SpeechClientDependency,
     transcription_client: TranscriptionClientDependency,
     executor_registry: ExecutorRegistryDependency,
 ) -> Response:
-    completion_client = AsyncOpenAI(
-        base_url=f"http://{config.host}:{config.port}/v1",
-        api_key=config.api_key.get_secret_value() if config.api_key else "cant-be-empty",
-        max_retries=0,
-    ).chat.completions
     ctx = SessionContext(
         transcription_client=transcription_client,
         completion_client=completion_client,
+        speech_client=speech_client,
         vad_model_manager=executor_registry.vad.model_manager,
         session=create_session_object_configuration(model, "conversation", None, None),
     )

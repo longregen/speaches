@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 from contextlib import contextmanager
 import logging
 from typing import TYPE_CHECKING
@@ -9,6 +10,7 @@ import openai
 from openai.types.beta.realtime.error_event import Error
 from pydantic import BaseModel
 
+from speaches import text_utils
 from speaches.realtime.chat_utils import (
     create_completion_params,
     items_to_chat_messages,
@@ -16,6 +18,7 @@ from speaches.realtime.chat_utils import (
 from speaches.realtime.event_router import EventRouter
 from speaches.realtime.session_event_router import unsupported_field_error, update_dict
 from speaches.realtime.utils import generate_response_id, task_done_callback
+from speaches.text_utils import SentenceChunker
 from speaches.types.realtime import (
     ConversationItemContentAudio,
     ConversationItemContentText,
@@ -48,6 +51,7 @@ from speaches.types.realtime import (
 if TYPE_CHECKING:
     from collections.abc import AsyncGenerator, Generator
 
+    from openai.resources.audio import AsyncSpeech
     from openai.resources.chat import AsyncCompletions
     from openai.types.chat import ChatCompletionChunk
 
@@ -78,14 +82,18 @@ class ResponseHandler:
         self,
         *,
         completion_client: AsyncCompletions,
+        speech_client: AsyncSpeech,
         model: str,
+        speech_model: str,
         configuration: Response,
         conversation: Conversation,
         pubsub: EventPubSub,
     ) -> None:
         self.id = generate_response_id()
         self.completion_client = completion_client
+        self.speech_client = speech_client
         self.model = model  # NOTE: unfortunatly `Response` doesn't have a `model` field
+        self.speech_model = speech_model
         self.configuration = configuration
         self.conversation = conversation
         self.pubsub = pubsub
@@ -145,29 +153,66 @@ class ResponseHandler:
             self.conversation.create_item(item)
 
             with self.add_item_content(item, ConversationItemContentAudio(audio="", transcript="")) as content:
-                async for chunk in chunk_stream:
-                    assert len(chunk.choices) == 1, chunk
-                    choice = chunk.choices[0]
+                sentence_chunker = SentenceChunker()
 
-                    audio = getattr(choice.delta, "audio", None)
-                    if audio is None:
-                        logger.warning(f"Could not extract audio from chunk: {chunk}")
-                        continue
-                    assert isinstance(audio, dict), chunk
-                    audio = ChoiceDeltaAudio(**audio)
-                    if audio.transcript is not None:
-                        self.pubsub.publish_nowait(
-                            ResponseAudioTranscriptDeltaEvent(
-                                item_id=item.id, response_id=self.id, delta=audio.transcript
+                async def process_text_stream() -> None:
+                    async for chunk in chunk_stream:
+                        assert len(chunk.choices) == 1, chunk
+                        choice = chunk.choices[0]
+
+                        # Native audio path (e.g. OpenAI GPT-4o with audio)
+                        audio = getattr(choice.delta, "audio", None)
+                        if audio is not None:
+                            assert isinstance(audio, dict), chunk
+                            parsed_audio = ChoiceDeltaAudio(**audio)
+                            if parsed_audio.transcript is not None:
+                                content.transcript += parsed_audio.transcript
+                                self.pubsub.publish_nowait(
+                                    ResponseAudioTranscriptDeltaEvent(
+                                        item_id=item.id, response_id=self.id, delta=parsed_audio.transcript
+                                    )
+                                )
+                            if parsed_audio.data is not None:
+                                self.pubsub.publish_nowait(
+                                    ResponseAudioDeltaEvent(
+                                        item_id=item.id, response_id=self.id, delta=parsed_audio.data
+                                    )
+                                )
+                            continue
+
+                        # Text-only LLM path: feed text to sentence chunker for TTS
+                        if choice.delta.content is not None:
+                            content.transcript += choice.delta.content
+                            self.pubsub.publish_nowait(
+                                ResponseAudioTranscriptDeltaEvent(
+                                    item_id=item.id, response_id=self.id, delta=choice.delta.content
+                                )
                             )
-                        )
-                        content.transcript += audio.transcript
+                            sentence_chunker.add_token(choice.delta.content)
 
-                    if audio.data is not None:
-                        self.pubsub.publish_nowait(
-                            ResponseAudioDeltaEvent(item_id=item.id, response_id=self.id, delta=audio.data)
+                    sentence_chunker.close()
+
+                async def process_tts_stream() -> None:
+                    async for sentence in sentence_chunker:
+                        sentence_clean = text_utils.clean_for_tts(sentence)
+                        if not sentence_clean:
+                            continue
+                        res = await self.speech_client.create(
+                            input=sentence_clean,
+                            model=self.speech_model,
+                            voice=self.configuration.voice,
+                            response_format="pcm",
+                            extra_body={"sample_rate": 24000},
                         )
-                        # NOTE: we explicitly don't append the audio data to the `audio` field
+                        audio_bytes = res.read()
+                        audio_data = base64.b64encode(audio_bytes).decode("utf-8")
+                        self.pubsub.publish_nowait(
+                            ResponseAudioDeltaEvent(item_id=item.id, response_id=self.id, delta=audio_data)
+                        )
+
+                text_task = asyncio.create_task(process_text_stream())
+                tts_task = asyncio.create_task(process_tts_stream())
+                await asyncio.gather(text_task, tts_task)
 
                 self.pubsub.publish_nowait(ResponseAudioDoneEvent(item_id=item.id, response_id=self.id))
                 self.pubsub.publish_nowait(
@@ -296,7 +341,9 @@ async def handle_response_create_event(ctx: SessionContext, event: ResponseCreat
 
     ctx.response = ResponseHandler(
         completion_client=ctx.completion_client,
+        speech_client=ctx.speech_client,
         model=ctx.session.model,
+        speech_model=ctx.session.speech_model,
         configuration=configuration,
         conversation=ctx.conversation,
         pubsub=ctx.pubsub,

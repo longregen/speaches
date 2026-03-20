@@ -1,7 +1,7 @@
 from collections import OrderedDict
 from typing import TYPE_CHECKING
 
-from openai.resources.audio import AsyncTranscriptions
+from openai.resources.audio import AsyncSpeech, AsyncTranscriptions
 from openai.resources.chat.completions import AsyncCompletions
 
 from speaches.executors.silero_vad_v5 import SileroVADModelManager
@@ -19,11 +19,13 @@ class SessionContext:
         self,
         transcription_client: AsyncTranscriptions,
         completion_client: AsyncCompletions,
+        speech_client: AsyncSpeech,
         vad_model_manager: SileroVADModelManager,
         session: Session,
     ) -> None:
         self.transcription_client = transcription_client
         self.completion_client = completion_client
+        self.speech_client = speech_client
         self.vad_model_manager = vad_model_manager
 
         self.session = session

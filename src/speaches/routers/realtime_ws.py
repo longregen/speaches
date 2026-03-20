@@ -7,11 +7,12 @@ from fastapi import (
     WebSocketException,
     status,
 )
-from openai import AsyncOpenAI
 
 from speaches.dependencies import (
+    CompletionClientDependency,
     ConfigDependency,
     ExecutorRegistryDependency,
+    SpeechClientDependency,
     TranscriptionClientDependency,
 )
 from speaches.realtime.context import SessionContext
@@ -58,6 +59,8 @@ async def realtime(
     ws: WebSocket,
     model: str,
     config: ConfigDependency,
+    completion_client: CompletionClientDependency,
+    speech_client: SpeechClientDependency,
     transcription_client: TranscriptionClientDependency,
     executor_registry: ExecutorRegistryDependency,
     intent: str = "conversation",
@@ -86,14 +89,10 @@ async def realtime(
     await ws.accept()
     logger.info(f"Accepted websocket connection with intent: {intent}")
 
-    completion_client = AsyncOpenAI(
-        base_url=f"http://{config.host}:{config.port}/v1",
-        api_key=config.api_key.get_secret_value() if config.api_key else "cant-be-empty",
-        max_retries=0,
-    ).chat.completions
     ctx = SessionContext(
         transcription_client=transcription_client,
         completion_client=completion_client,
+        speech_client=speech_client,
         vad_model_manager=executor_registry.vad.model_manager,
         session=create_session_object_configuration(model, intent, language, transcription_model),
     )
