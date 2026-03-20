@@ -764,6 +764,74 @@
               hash = bundleHash;
             };
 
+            # End-to-end realtime test (uses mock LLM, tests full WS pipeline)
+            e2e-test-realtime =
+              let
+                testPython = defaultPkgs.python312.withPackages (
+                  ps: with ps; [
+                    httpx
+                    websockets
+                    uvicorn
+                    fastapi
+                  ]
+                );
+              in
+              defaultPkgs.writeShellScriptBin "speaches-e2e-test-realtime" ''
+                set -euo pipefail
+
+                echo "=== Speaches Realtime E2E Test (Mock LLM) ==="
+
+                MODEL_CACHE="${
+                  nix-hug.lib.${system}.buildCache {
+                    models = [
+                      models.kokoro-82m
+                      models.silero-vad
+                      models.whisper-base
+                    ];
+                    hash = bundleHash;
+                  }
+                }"
+                export HF_HUB_CACHE="$MODEL_CACHE/hub"
+                export HF_HUB_OFFLINE=1
+
+                MOCK_LLM_PORT=18001
+                SPEACHES_PORT=18000
+
+                # Start speaches server with mock LLM as the chat completion backend
+                echo "Starting Speaches server (chat completions -> mock LLM on port $MOCK_LLM_PORT)..."
+                CHAT_COMPLETION_BASE_URL="http://127.0.0.1:$MOCK_LLM_PORT/v1" \
+                CHAT_COMPLETION_API_KEY="mock-key" \
+                LOOPBACK_HOST_URL="http://127.0.0.1:$SPEACHES_PORT" \
+                  ${speaches-cpu}/bin/speaches --host 127.0.0.1 --port $SPEACHES_PORT &
+                SERVER_PID=$!
+
+                cleanup() {
+                  echo "Cleaning up..."
+                  kill $SERVER_PID 2>/dev/null || true
+                  wait $SERVER_PID 2>/dev/null || true
+                }
+                trap cleanup EXIT
+
+                echo "Waiting for server to start..."
+                for i in {1..120}; do
+                  if ${defaultPkgs.curl}/bin/curl -s http://127.0.0.1:$SPEACHES_PORT/health >/dev/null 2>&1; then
+                    echo "Server is ready!"
+                    break
+                  fi
+                  if [ $i -eq 120 ]; then
+                    echo "Server failed to start within 120 seconds"
+                    exit 1
+                  fi
+                  if [ $((i % 10)) -eq 0 ]; then
+                    echo "Attempt $i/120 - still waiting for server..."
+                  fi
+                  sleep 1
+                done
+
+                echo "Running realtime WebSocket E2E test..."
+                ${testPython}/bin/python ${./tests/e2e_realtime.py}
+              '';
+
             # End-to-end test packages
             e2e-test = mkE2eTestScript {
               name = "speaches-e2e-test";
