@@ -13,7 +13,7 @@ rec {
     src = pkgs.fetchFromGitHub {
       owner = "thewh1teagle";
       repo = "espeakng-loader";
-      rev = "main";
+      rev = "0ddc87adf77e5850d7eeb542ac8a87d421b64daa"; # main as of 2026-03-20; hash may need updating if it no longer matches
       hash = "sha256-nSEQ9rofFl6BTH18L5DzaQ1Ymw5H3d+wSEXUxp4o1DM=";
     };
     nativeBuildInputs = [ pyPackages.hatchling ];
@@ -33,7 +33,7 @@ rec {
     src = pkgs.fetchFromGitHub {
       owner = "thewh1teagle";
       repo = "kokoro-onnx";
-      rev = "main";
+      rev = "2bfb160cfae06709a6d7c3d436293972e0f1d12f"; # main as of 2026-03-20; hash may need updating if it no longer matches
       hash = "sha256-UlPhijY9UHKcck30C0mQ5CcN3Zi/TzARjpzAsYkUqxc=";
     };
     nativeBuildInputs = with pyPackages; [
@@ -121,32 +121,19 @@ rec {
     doCheck = false;
   };
 
-  # Utility packages
-  pytest_antilru = pyPackages.buildPythonPackage {
-    pname = "pytest_antilru";
-    version = "2.0.0";
-    format = "pyproject";
-    src = pyPackages.fetchPypi {
-      pname = "pytest_antilru";
-      version = "2.0.0";
-      hash = "sha256-SM/zQmSLahzk5TmM8gOWaQXVRrPyvue7VdfLPsh6hfs=";
-    };
-    nativeBuildInputs = [ pyPackages.poetry-core ];
-    propagatedBuildInputs = [ pyPackages.pytest ];
-    doCheck = false;
-  };
-
   # Override csvw to avoid frictionless -> moto -> sagemaker -> google-pasta
   # dependency chain which is broken on Python 3.14+.
   # nixpkgs' csvw incorrectly includes frictionless as a runtime dep (it is only a test dep).
   csvw = pyPackages.buildPythonPackage {
     pname = "csvw";
     version = "3.7.0";
-    format = "wheel";
-    src = pkgs.fetchurl {
-      url = "https://files.pythonhosted.org/packages/80/cb/19e8e582fc164db200c18078bdbdcc60c012cb83c7f02ea8e876bc0b1adf/csvw-3.7.0-py2.py3-none-any.whl";
-      hash = "sha256-IbiNtQo16UDUtc3Y86gIRJOtfxuxZX7XMjqtl3NZlA4=";
+    format = "setuptools";
+    src = pyPackages.fetchPypi {
+      pname = "csvw";
+      version = "3.7.0";
+      hash = "sha256-hptcdhSB5SwBqZ+0dJsnikuLDbTg+hllozo0QccDRls=";
     };
+    nativeBuildInputs = [ pyPackages.setuptools ];
     propagatedBuildInputs = with pyPackages; [
       attrs
       isodate
@@ -167,12 +154,14 @@ rec {
   # Override segments to use our csvw (without frictionless)
   segments = pyPackages.buildPythonPackage {
     pname = "segments";
-    version = "2.3.0";
-    format = "wheel";
-    src = pkgs.fetchurl {
-      url = "https://files.pythonhosted.org/packages/11/18/cb614939ccd46d336013cab705f1e11540ec9c68b08ecbb854ab893fc480/segments-2.3.0-py2.py3-none-any.whl";
-      hash = "sha256-MKVlZ4cHFDDNIkIuBHE7KpvqvhqX0uvzf3FqVvkFd6M=";
+    version = "2.4.0";
+    format = "setuptools";
+    src = pyPackages.fetchPypi {
+      pname = "segments";
+      version = "2.4.0";
+      hash = "sha256-u6cfVSDd1UyKovTXZaYGGMaGIWLW5zVqSgl/IiMWb1s=";
     };
+    nativeBuildInputs = [ pyPackages.setuptools ];
     propagatedBuildInputs = with pyPackages; [
       regex
       csvw
@@ -184,11 +173,13 @@ rec {
   phonemizer_fork = pyPackages.buildPythonPackage {
     pname = "phonemizer-fork";
     version = "3.3.2";
-    format = "wheel";
-    src = pkgs.fetchurl {
-      url = "https://files.pythonhosted.org/packages/64/f1/0dcce21b0ae16a82df4b6583f8f3ad8e55b35f7e98b6bf536a4dd225fa08/phonemizer_fork-3.3.2-py3-none-any.whl";
-      hash = "sha256-lzBcdvQYOzgl2uj0wDImX+eMmUbOWMR9S2IWE0kmS3Q=";
+    format = "pyproject";
+    src = pyPackages.fetchPypi {
+      pname = "phonemizer_fork";
+      version = "3.3.2";
+      hash = "sha256-EOFugn0EQ7CHBi4htV6AXACYnPE0Oy6B5zTK5fbAz2k=";
     };
+    nativeBuildInputs = [ pyPackages.hatchling ];
     propagatedBuildInputs = with pyPackages; [
       joblib
       segments
@@ -201,14 +192,27 @@ rec {
     doCheck = false;
   };
 
+  # onnx_asr has a custom hatch build hook that generates .onnx preprocessor models
+  # at build time using torch + onnxscript. These are deterministic signal processing
+  # graphs (FFT, mel filterbanks, resamplers), not trained weights.
   onnx_asr = pyPackages.buildPythonPackage {
     pname = "onnx_asr";
     version = "0.10.2";
-    format = "wheel";
-    src = pkgs.fetchurl {
-      url = "https://files.pythonhosted.org/packages/a6/58/951afd8d9c3ec3f67c2b6915bea25a2ce6c2fd9b482c7449bc3f21f9cdcb/onnx_asr-0.10.2-py3-none-any.whl";
-      hash = "sha256-uzaw60e6SWtw+w6FaGNITcUZ0npJfu4ULcolGaUJCZU=";
+    format = "pyproject";
+    src = pyPackages.fetchPypi {
+      pname = "onnx_asr";
+      version = "0.10.2";
+      hash = "sha256-cDgZOc+C0CwSV1N+f1glw12xUAjMAqXEOk5ittWsuzQ=";
     };
+    nativeBuildInputs = with pyPackages; [
+      hatchling
+      hatch-vcs
+      # Build deps for the custom hatch hook that generates .onnx preprocessor models
+      onnx
+      onnxscript
+      torch
+      torchaudio
+    ];
     propagatedBuildInputs = with pyPackages; [
       numpy
       onnxruntime
@@ -221,62 +225,67 @@ rec {
   einops = pyPackages.buildPythonPackage {
     pname = "einops";
     version = "0.8.2";
-    format = "wheel";
-    src = pkgs.fetchurl {
-      url = "https://files.pythonhosted.org/packages/2a/09/f8d8f8f31e4483c10a906437b4ce31bdf3d6d417b73fe33f1a8b59e34228/einops-0.8.2-py3-none-any.whl";
-      hash = "sha256-VAWCAaxwh5ERgb/sSvYJG7WTgDYPBpJ2YBJWp2rwgZM=";
+    format = "pyproject";
+    src = pyPackages.fetchPypi {
+      pname = "einops";
+      version = "0.8.2";
+      hash = "sha256-YJ2mZVcOXiZeJyg6qwnn8nmt6QxPAbz8oRHz0+E/KCc=";
     };
+    nativeBuildInputs = [ pyPackages.hatchling ];
     doCheck = false;
   };
 
   kaldi_native_fbank =
     let
-      pythonVersion = pyPackages.python.pythonVersion;
-      srcs = {
-        "x86_64-linux" = {
-          "3.12" = pkgs.fetchurl {
-            url = "https://files.pythonhosted.org/packages/84/90/01ef7331c52b1eaf9916f3f7a535155aac2e9e2ddad12a141613d92758c7/kaldi_native_fbank-1.22.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
-            hash = "sha256-8W50Ny/p4gq7QYP5io4iiNXuTEjQTZS2FgMRFw4AdmE=";
-          };
-          "3.13" = pkgs.fetchurl {
-            url = "https://files.pythonhosted.org/packages/bc/1e/496c7ae814b2a7f8f47d423dc33aae2cdfb1edf898e2faaf5c5b39b90363/kaldi_native_fbank-1.22.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
-            hash = "sha256-4/nGVR/1tq54XdFfgZw7K3Qy13v7eeqIBnSOLH2QC10=";
-          };
-          "3.14" = pkgs.fetchurl {
-            url = "https://files.pythonhosted.org/packages/2b/6a/374ec4e1cf13e672f5acd8272116c1885c2a7f84be491fc652415fc6e870/kaldi_native_fbank-1.22.3-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
-            hash = "sha256-8cwrju7FKjOGjPWbuV1AszX6nP9+FaYgjg6bZ7f9cjY=";
-          };
-        };
-        "aarch64-linux" = {
-          "3.12" = pkgs.fetchurl {
-            url = "https://files.pythonhosted.org/packages/43/28/6f4fd8953c0b3f30de4526fd024095032abcdc25b6736c77a891687c604e/kaldi_native_fbank-1.22.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl";
-            hash = "sha256-9aRLSoPPm/E9P3eFiSgGiwbT7CI4wn/y45OT+/d0nJ8=";
-          };
-        };
+      kissfft-src = pkgs.fetchurl {
+        url = "https://github.com/mborgerding/kissfft/archive/febd4caeed32e33ad8b2e0bb5ea77542c40f18ec.zip";
+        hash = "sha256-SXED5mQWjr45WAt1etvmFvbPhaFlcq9YHKe8QtCrE/0=";
       };
-      archSrcs = srcs.${system} or {};
-      wheelSrc = archSrcs.${pythonVersion} or null;
     in
-    if wheelSrc == null then
-      null
-    else
-      pyPackages.buildPythonPackage {
-        pname = "kaldi_native_fbank";
-        version = "1.22.3";
-        format = "wheel";
-        src = wheelSrc;
-        propagatedBuildInputs = with pyPackages; [ numpy ];
-        doCheck = false;
+    pyPackages.buildPythonPackage {
+      pname = "kaldi_native_fbank";
+      version = "1.22.3";
+      format = "setuptools";
+      src = pkgs.fetchFromGitHub {
+        owner = "csukuangfj";
+        repo = "kaldi-native-fbank";
+        rev = "v1.22.3";
+        hash = "sha256-Wu4wM52T6NoQ1t5/iAyPtkEGnZki5P0jx0eYMFZMb5o=";
       };
+      nativeBuildInputs = with pkgs; [
+        cmake
+        ninja
+      ];
+      buildInputs = [
+        pyPackages.pybind11
+      ];
+      propagatedBuildInputs = with pyPackages; [ numpy ];
+      postPatch = ''
+        # Replace FetchContent-based pybind11 download with find_package
+        cat > cmake/pybind11.cmake << 'PYBIND_EOF'
+        find_package(pybind11 REQUIRED)
+        PYBIND_EOF
+
+        # Place pre-fetched kissfft source where cmake/kissfft.cmake expects it
+        cp ${kissfft-src} $PWD/kissfft-febd4caeed32e33ad8b2e0bb5ea77542c40f18ec.zip
+      '';
+      dontUseCmakeConfigure = true;
+      doCheck = false;
+    };
 
   onnx_dl = pyPackages.buildPythonPackage {
     pname = "onnx_dl";
     version = "0.1.0";
-    format = "wheel";
-    src = pkgs.fetchurl {
-      url = "https://files.pythonhosted.org/packages/3b/14/4ebec13075d24ba4f2d5ae1c2ad0bd62e56c90c5ef474d5357aa2c79f761/onnx_dl-0.1.0-py3-none-any.whl";
-      hash = "sha256-QTYimCMcjT2qpw51FZUJ/bj2nH4CLR2P0y23pJLesf4=";
+    format = "pyproject";
+    src = pyPackages.fetchPypi {
+      pname = "onnx_dl";
+      version = "0.1.0";
+      hash = "sha256-9wRHepJ8jod77OhA/DDh8lZIm+IlIyhdpumCqFN6lxs=";
     };
+    nativeBuildInputs = [ pyPackages.uv-build ];
+    postPatch = ''
+      sed -i 's/requires = \["uv_build[^"]*"\]/requires = ["uv_build"]/' pyproject.toml
+    '';
     propagatedBuildInputs = with pyPackages; [ onnxruntime ];
     doCheck = false;
   };
@@ -284,11 +293,16 @@ rec {
   pyannote_core = pyPackages.buildPythonPackage {
     pname = "pyannote_core";
     version = "6.0.1";
-    format = "wheel";
-    src = pkgs.fetchurl {
-      url = "https://files.pythonhosted.org/packages/ea/57/ecf62344b9b81debd0ca95ed987135e93d1b039507f8174f52d1d19d8c6b/pyannote_core-6.0.1-py3-none-any.whl";
-      hash = "sha256-kkVQ1uz2sFrRO/P2b1nCn8dAzxxipvyoYKwuZpCCA+U=";
+    format = "pyproject";
+    src = pyPackages.fetchPypi {
+      pname = "pyannote_core";
+      version = "6.0.1";
+      hash = "sha256-S0raMnb2304HP6eRZmNuNZfQ3LWg/iYBSjR3hnzAM/s=";
     };
+    nativeBuildInputs = with pyPackages; [
+      hatchling
+      hatch-vcs
+    ];
     propagatedBuildInputs = with pyPackages; [
       numpy
       pandas
@@ -300,11 +314,16 @@ rec {
   onnx_diarization = pyPackages.buildPythonPackage {
     pname = "onnx_diarization";
     version = "0.1.0";
-    format = "wheel";
-    src = pkgs.fetchurl {
-      url = "https://files.pythonhosted.org/packages/72/e7/15966d1f468f90c40d6f47966c1aa6661bbeb4a53c4590341935182e7c44/onnx_diarization-0.1.0-py3-none-any.whl";
-      hash = "sha256-TmrUIKK8XJylGAIIAAh/30duhNHrmPf5VrS/Gl3XDyo=";
+    format = "pyproject";
+    src = pyPackages.fetchPypi {
+      pname = "onnx_diarization";
+      version = "0.1.0";
+      hash = "sha256-CFEeNDfXr1vR9wNJ0BG/kpqFNaTUmAXBQvx9tmb5xOU=";
     };
+    nativeBuildInputs = [ pyPackages.uv-build ];
+    postPatch = ''
+      sed -i 's/requires = \["uv_build[^"]*"\]/requires = ["uv_build"]/' pyproject.toml
+    '';
     propagatedBuildInputs =
       with pyPackages;
       [
@@ -323,53 +342,78 @@ rec {
   };
 
   # Piper TTS packages (Linux only)
-  piper_phonemize =
-    let
-      srcs = {
-        "x86_64-linux" = pkgs.fetchurl {
-          url = "https://github.com/fedirz/piper-phonemize/raw/refs/heads/master/dist/piper_phonemize-1.2.0-cp312-cp312-manylinux_2_28_x86_64.whl";
-          hash = "sha256-E7/QdVBXIELF5t2NQAdr8kEBqTCvDHoSZUJyFydSJbM=";
-        };
-        "aarch64-linux" = pkgs.fetchurl {
-          url = "https://github.com/fedirz/piper-phonemize/raw/refs/heads/master/dist/piper_phonemize-1.2.0-cp312-cp312-manylinux_2_28_aarch64.whl";
-          hash = "sha256-yPUnkHN6985spmC7M9lTmq7tBemkd89MtJCCuxQrzRM=";
-        };
-      };
-      wheelSrc = srcs.${system} or null;
-    in
-    if wheelSrc != null then
-      pyPackages.buildPythonPackage {
-        pname = "piper_phonemize";
-        version = "1.2.0";
-        format = "wheel";
-        src = wheelSrc;
-        doCheck = false;
-      }
-    else
-      null;
+  # piper-tts v1.3.0+ (from OHF-Voice/piper1-gpl) embeds espeak-ng directly
+  # and no longer depends on the old rhasspy/piper-phonemize library.
+  # Previously, piper_phonemize v1.2.0 was fetched as pre-compiled wheels from
+  # a personal GitHub repo (fedirz/piper-phonemize) -- the highest supply chain risk
+  # in the dependency tree. That dependency has been eliminated entirely.
+
+  # piper_phonemize is no longer needed by piper-tts v1.3.0+.
+  # Kept as null for backward compatibility with flake.nix references.
+  piper_phonemize = null;
 
   piper_tts =
     let
-      srcs = {
-        "x86_64-linux" = pkgs.fetchurl {
-          url = "https://files.pythonhosted.org/packages/39/42/b44ae16ef80d86173518aafe2a493a826b46f9fe4fba1b82cd575117d5ac/piper_tts-1.4.1-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl";
-          hash = "sha256-WqUzNkwVJI0pMrzDYusHQN580o3DQjPejfLuPG8q3wA=";
-        };
-        "aarch64-linux" = pkgs.fetchurl {
-          url = "https://files.pythonhosted.org/packages/8c/92/f37e5111440fc6c6336f42f8dab88afaa545394784dc930f808a68883c48/piper_tts-1.3.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.manylinux_2_28_aarch64.whl";
-          hash = "sha256-jTn4XD9Lat5RKXaElXk0T8cllexhPzdNvPhSFxY5iQc=";
-        };
+      isLinux = (system == "x86_64-linux" || system == "aarch64-linux");
+
+      # Override espeak-ng with piper-specific feature flags disabled
+      # (mirrors nixpkgs pkgs/by-name/pi/piper-tts/package.nix)
+      espeak-ng' = pkgs.espeak-ng.override {
+        asyncSupport = false;
+        klattSupport = false;
+        mbrolaSupport = false;
+        pcaudiolibSupport = false;
+        sonicSupport = false;
+        speechPlayerSupport = false;
       };
-      wheelSrc = srcs.${system} or null;
-      version = if system == "aarch64-linux" then "1.3.0" else "1.4.1";
     in
-    if wheelSrc != null then
+    if isLinux then
       pyPackages.buildPythonPackage {
-        pname = "piper_tts";
-        inherit version;
-        format = "wheel";
-        src = wheelSrc;
-        propagatedBuildInputs = [ piper_phonemize pyPackages.onnxruntime ];
+        pname = "piper-tts";
+        version = "1.4.1";
+        pyproject = true;
+
+        src = pkgs.fetchFromGitHub {
+          owner = "OHF-Voice";
+          repo = "piper1-gpl";
+          tag = "v1.4.1";
+          hash = "sha256-V/ESZMUT1PXxHNN7H2ckTBVOQRRf4c/L2GNtnkXvNpA=";
+        };
+
+        # Patch from nixpkgs (OHF-Voice/piper1-gpl#17, not yet merged upstream)
+        # Allows building against system espeak-ng via pkg-config instead of
+        # downloading and compiling espeak-ng from source during the build.
+        patches = [
+          ./piper-tts-cmake-system-libs.patch
+        ];
+
+        nativeBuildInputs = with pyPackages; [
+          cmake
+          ninja
+          scikit-build
+          setuptools
+          pkgs.pkg-config
+        ];
+
+        dontUseCmakeConfigure = true;
+
+        env.CMAKE_ARGS = builtins.toString [
+          (pkgs.lib.cmakeFeature "UCD_STATIC_LIB" "${espeak-ng'.ucd-tools}/libucd.a")
+        ];
+
+        buildInputs = [
+          espeak-ng'
+        ];
+
+        propagatedBuildInputs = with pyPackages; [
+          onnxruntime
+          pathvalidate
+        ];
+
+        postInstall = ''
+          ln -s ${espeak-ng'}/share/espeak-ng-data $out/${pyPackages.python.sitePackages}/piper/
+        '';
+
         doCheck = false;
       }
     else
@@ -378,12 +422,16 @@ rec {
   # OpenTelemetry instrumentation packages
   opentelemetry_instrumentation_asyncio = pyPackages.buildPythonPackage {
     pname = "opentelemetry-instrumentation-asyncio";
-    version = "0.55b0";
-    format = "wheel";
-    src = pkgs.fetchurl {
-      url = "https://files.pythonhosted.org/packages/82/71/64ed9dc18c278fd153a09af240c46dbbcf13244b76c256c9c6798c2faf1d/opentelemetry_instrumentation_asyncio-0.55b0-py3-none-any.whl";
-      hash = "sha256-Mnj/iWSHfOFjiLuvZGV6pt+j5ewHF1WD7XINN89KVpE=";
+    version = "0.61b0";
+    format = "pyproject";
+    src = pyPackages.fetchPypi {
+      pname = "opentelemetry_instrumentation_asyncio";
+      version = "0.61b0";
+      hash = "sha256-Oxc7AJ8Qj8vG7k90gueui3ZRioemIK1efdJOTCYGbDw=";
     };
+    nativeBuildInputs = with pyPackages; [
+      hatchling
+    ];
     propagatedBuildInputs = with pyPackages; [
       opentelemetry-api
       opentelemetry-instrumentation
@@ -396,12 +444,16 @@ rec {
 
   opentelemetry_instrumentation_httpx = pyPackages.buildPythonPackage {
     pname = "opentelemetry-instrumentation-httpx";
-    version = "0.55b0";
-    format = "wheel";
-    src = pkgs.fetchurl {
-      url = "https://files.pythonhosted.org/packages/79/06/766bca20f82c9b47010fb838f753069141b32f1c84a5fa4c1abc97b63add/opentelemetry_instrumentation_httpx-0.55b0-py3-none-any.whl";
-      hash = "sha256-EjqiS2GR/1xLgaFZpZqR+zKiG9NoglEQ0zuO3kcjhZc=";
+    version = "0.61b0";
+    format = "pyproject";
+    src = pyPackages.fetchPypi {
+      pname = "opentelemetry_instrumentation_httpx";
+      version = "0.61b0";
+      hash = "sha256-ZWnsCXlGxVUcKkJS90yYZmrd0b8EfB3ea070JnGf+N0=";
     };
+    nativeBuildInputs = with pyPackages; [
+      hatchling
+    ];
     propagatedBuildInputs = with pyPackages; [
       httpx
       opentelemetry-api
@@ -414,53 +466,4 @@ rec {
     dontCheckRuntimeDeps = true;
   };
 
-  opentelemetry_instrumentation_openai = pyPackages.buildPythonPackage {
-    pname = "opentelemetry_instrumentation_openai";
-    version = "0.53.0";
-    format = "pyproject";
-    src = pyPackages.fetchPypi {
-      pname = "opentelemetry_instrumentation_openai";
-      version = "0.53.0";
-      hash = "sha256-wM2D0iPRODCa88xfU8nG0iE2N0v6AOj2bf8xzTIu9Uc=";
-    };
-    nativeBuildInputs = with pyPackages; [
-      hatchling
-      poetry-core
-    ];
-    propagatedBuildInputs = with pyPackages; [
-      opentelemetry-api
-      opentelemetry-instrumentation
-      opentelemetry-semantic-conventions
-      typing-extensions
-      wrapt
-    ];
-    doCheck = false;
-    dontCheckRuntimeDeps = true;
-    pythonImportsCheck = [ ];
-  };
-
-  opentelemetry_instrumentation_openai_v2 = pyPackages.buildPythonPackage {
-    pname = "opentelemetry_instrumentation_openai_v2";
-    version = "2.3b0";
-    format = "pyproject";
-    src = pyPackages.fetchPypi {
-      pname = "opentelemetry_instrumentation_openai_v2";
-      version = "2.3b0";
-      hash = "sha256-XenXDMlTbuof5I6gFuDF8lc1+poTcJB2pksgZX+ttro=";
-    };
-    nativeBuildInputs = with pyPackages; [
-      hatchling
-      poetry-core
-    ];
-    propagatedBuildInputs = with pyPackages; [
-      opentelemetry-api
-      opentelemetry-instrumentation
-      opentelemetry-semantic-conventions
-      httpx
-      wrapt
-    ];
-    doCheck = false;
-    dontCheckRuntimeDeps = true;
-    pythonImportsCheck = [ ];
-  };
 }

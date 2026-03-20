@@ -63,7 +63,8 @@
 
               # Override onnxruntime in the python fixed-point for the target Python version only
               pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
-                (pyFinal: pyPrev:
+                (
+                  pyFinal: pyPrev:
                   let
                     pyVer = pyPrev.python.pythonVersion;
                   in
@@ -83,23 +84,21 @@
                 )
               ];
 
-              "${pythonVersion}Packages" =
-                pyPackages
-                // {
-                  # Override faster-whisper to use our ctranslate2 and ensure silero assets exist
-                  faster-whisper = pyPackages.faster-whisper.overrideAttrs (old: {
-                    propagatedBuildInputs = old.propagatedBuildInputs ++ [ final.ctranslate2 ];
-                    postInstall = (old.postInstall or "") + ''
-                      # Copy silero VAD assets if they don't exist
-                      assets_dir="$out/${pyPackages.python.sitePackages}/faster_whisper/assets"
-                      mkdir -p "$assets_dir"
-                      if [ ! -f "$assets_dir/silero_encoder_v5.onnx" ]; then
-                        cp ${final.silero-encoder-v5} "$assets_dir/silero_encoder_v5.onnx"
-                        cp ${final.silero-decoder-v5} "$assets_dir/silero_decoder_v5.onnx"
-                      fi
-                    '';
-                  });
-                };
+              "${pythonVersion}Packages" = pyPackages // {
+                # Override faster-whisper to use our ctranslate2 and ensure silero assets exist
+                faster-whisper = pyPackages.faster-whisper.overrideAttrs (old: {
+                  propagatedBuildInputs = old.propagatedBuildInputs ++ [ final.ctranslate2 ];
+                  postInstall = (old.postInstall or "") + ''
+                    # Copy silero VAD assets if they don't exist
+                    assets_dir="$out/${pyPackages.python.sitePackages}/faster_whisper/assets"
+                    mkdir -p "$assets_dir"
+                    if [ ! -f "$assets_dir/silero_encoder_v5.onnx" ]; then
+                      cp ${final.silero-encoder-v5} "$assets_dir/silero_encoder_v5.onnx"
+                      cp ${final.silero-decoder-v5} "$assets_dir/silero_decoder_v5.onnx"
+                    fi
+                  '';
+                });
+              };
             };
 
           mkSpeaches =
@@ -141,7 +140,6 @@
                     ps.pydantic
                     ps.pydantic-settings
                     ps.python-multipart
-                    ps.sounddevice
                     ps.soundfile
                     ps.uvicorn
                     ps.openai
@@ -161,9 +159,9 @@
                   ];
 
                   # Piper TTS dependencies (Linux only)
+                  # piper-tts v1.3.0+ embeds espeak-ng and no longer needs piper-phonemize
                   piperDeps = pkgs.lib.optionals (customDeps.piper_tts != null) [
                     customDeps.piper_tts
-                    customDeps.piper_phonemize
                   ];
 
                   # Development dependencies
@@ -173,7 +171,6 @@
                     ps.pytest
                     ps.pytest-mock
                     ps.ruff
-                    customDeps.pytest_antilru
                   ];
 
                   # OpenTelemetry dependencies (always included)
@@ -188,8 +185,6 @@
                     customDeps.opentelemetry_instrumentation_httpx
                     ps.opentelemetry-instrumentation-logging
                     ps.opentelemetry-instrumentation-grpc
-                    customDeps.opentelemetry_instrumentation_openai
-                    customDeps.opentelemetry_instrumentation_openai_v2
                   ];
                 in
                 coreDeps ++ piperDeps ++ devDeps ++ otelDeps
@@ -487,147 +482,149 @@
                   '';
             };
           # Helper to create e2e test scripts parameterized by server package
-          mkE2eTestScript = { name, serverPackage }: defaultPkgs.writeShellScriptBin name ''
-            set -euo pipefail
+          mkE2eTestScript =
+            { name, serverPackage }:
+            defaultPkgs.writeShellScriptBin name ''
+              set -euo pipefail
 
-            echo "=== Speaches End-to-End Test with Real Models ==="
-            echo "Setting up test environment..."
+              echo "=== Speaches End-to-End Test with Real Models ==="
+              echo "Setting up test environment..."
 
-            # Set up model paths using nix-hug's pre-built cache
-            MODEL_CACHE="${
-              nix-hug.lib.${system}.buildCache {
-                models = [
-                  models.kokoro-82m
-                  models.silero-vad
-                  models.whisper-base
-                ];
-                hash = "sha256-3s4rWTs1W3rvzUUaM1si3dKr2gUPqQNerUnFamhls0M=";
+              # Set up model paths using nix-hug's pre-built cache
+              MODEL_CACHE="${
+                nix-hug.lib.${system}.buildCache {
+                  models = [
+                    models.kokoro-82m
+                    models.silero-vad
+                    models.whisper-base
+                  ];
+                  hash = "sha256-3s4rWTs1W3rvzUUaM1si3dKr2gUPqQNerUnFamhls0M=";
+                }
+              }"
+              export HF_HUB_CACHE="$MODEL_CACHE/hub"
+              export HF_HUB_OFFLINE=1
+
+              echo "Using pre-built model cache at: $HF_HUB_CACHE"
+
+              # Create test directory
+              TEST_DIR=$(mktemp -d)
+              cd "$TEST_DIR"
+              echo "Test directory: $TEST_DIR"
+              echo "HF Cache directory: $HF_HUB_CACHE"
+
+              # Start speaches server in background
+              echo "Starting Speaches server with models..."
+              ${serverPackage}/bin/speaches --host 127.0.0.1 --port 18000 &
+              SERVER_PID=$!
+
+              # Function to cleanup on exit
+              cleanup() {
+                echo "Cleaning up..."
+                kill $SERVER_PID 2>/dev/null || true
+                wait $SERVER_PID 2>/dev/null || true
               }
-            }"
-            export HF_HUB_CACHE="$MODEL_CACHE/hub"
-            export HF_HUB_OFFLINE=1
+              trap cleanup EXIT
 
-            echo "Using pre-built model cache at: $HF_HUB_CACHE"
-
-            # Create test directory
-            TEST_DIR=$(mktemp -d)
-            cd "$TEST_DIR"
-            echo "Test directory: $TEST_DIR"
-            echo "HF Cache directory: $HF_HUB_CACHE"
-
-            # Start speaches server in background
-            echo "Starting Speaches server with models..."
-            ${serverPackage}/bin/speaches --host 127.0.0.1 --port 18000 &
-            SERVER_PID=$!
-
-            # Function to cleanup on exit
-            cleanup() {
-              echo "Cleaning up..."
-              kill $SERVER_PID 2>/dev/null || true
-              wait $SERVER_PID 2>/dev/null || true
-            }
-            trap cleanup EXIT
-
-            # Wait for server to start (longer timeout since models need to load)
-            echo "Waiting for server to start (this may take a while for model loading)..."
-            for i in {1..120}; do
-              if ${defaultPkgs.curl}/bin/curl -s http://127.0.0.1:18000/health >/dev/null 2>&1; then
-                echo "Server is ready!"
-                break
-              fi
-              if [ $i -eq 120 ]; then
-                echo "Server failed to start within 120 seconds"
-                exit 1
-              fi
-              if [ $((i % 10)) -eq 0 ]; then
-                echo "Attempt $i/120 - still waiting for server..."
-              fi
-              sleep 1
-            done
-
-            # Test health endpoint
-            echo "Testing health endpoint..."
-            if ${defaultPkgs.curl}/bin/curl -s http://127.0.0.1:18000/health | grep -q "OK"; then
-              echo "Health check passed"
-            else
-              echo "Health check failed"
-              exit 1
-            fi
-
-            # Test model listing
-            echo "Testing model listing..."
-            ${defaultPkgs.curl}/bin/curl -s http://127.0.0.1:18000/v1/models -o models.json
-            if [ -f models.json ] && ${defaultPkgs.jq}/bin/jq -e '.data' models.json >/dev/null; then
-              echo "Model listing endpoint works"
-              echo "Available models:"
-              ${defaultPkgs.jq}/bin/jq -r '.data[].id' models.json
-            else
-              echo "Model listing failed"
-              exit 1
-            fi
-
-            ORIGINAL_TEXT="People assume that time is a strict progression of cause to effect. But actually, from a nonlinear, non-subjective viewpoint, it is more like a big ball of wibbly wobbly, timey wimey stuff"
-
-            # Test TTS (Text-to-Speech) with real model
-            echo "Testing TTS with Kokoro model..."
-            TTS_RESPONSE=$(${defaultPkgs.curl}/bin/curl -s -w "%{http_code}" -X POST "http://127.0.0.1:18000/v1/audio/speech" \
-              -H "Content-Type: application/json" \
-              -d "{\"model\": \"tts-1\", \"input\": \"$ORIGINAL_TEXT\", \"voice\": \"af_bella\"}" \
-              -o test_tts_output.wav)
-
-            if [[ "$TTS_RESPONSE" =~ ^2[0-9][0-9]$ ]] && [ -f test_tts_output.wav ] && [ -s test_tts_output.wav ]; then
-              echo "TTS test passed - generated $(du -h test_tts_output.wav | cut -f1) audio file"
-              ${defaultPkgs.file}/bin/file test_tts_output.wav
-            else
-              echo "TTS test failed (HTTP $TTS_RESPONSE)"
-              exit 1
-            fi
-
-            # Test STT (Speech-to-Text) with the generated audio
-            echo "Testing STT with Whisper base model using generated audio..."
-            STT_RESPONSE=$(${defaultPkgs.curl}/bin/curl -s -w "%{http_code}" -X POST "http://127.0.0.1:18000/v1/audio/transcriptions" \
-              -F "file=@test_tts_output.wav" \
-              -F "model=Systran/faster-whisper-base" \
-              -o transcription.json)
-
-            if [[ "$STT_RESPONSE" =~ ^2[0-9][0-9]$ ]] && [ -f transcription.json ] && ${defaultPkgs.jq}/bin/jq -e '.text' transcription.json >/dev/null; then
-              echo "STT test passed - got transcription"
-              echo "Original text: $ORIGINAL_TEXT"
-              echo "Transcription: $(${defaultPkgs.jq}/bin/jq -r '.text' transcription.json)"
-
-              # Check if transcription is reasonably similar (basic check)
-              ORIGINAL_WORDS=$(echo "$ORIGINAL_TEXT" | tr '[:upper:]' '[:lower:]' | sed 's/[.,!?]//g')
-              TRANSCRIBED=$(${defaultPkgs.jq}/bin/jq -r '.text' transcription.json | tr '[:upper:]' '[:lower:]' | sed 's/[.,!?]//g')
-
-              TOTAL_WORDS=$(echo $ORIGINAL_WORDS | wc -w)
-
-              MATCHES=0
-              for word in $ORIGINAL_WORDS; do
-                if echo "$TRANSCRIBED" | grep -q "$word"; then
-                  MATCHES=$((MATCHES + 1))
+              # Wait for server to start (longer timeout since models need to load)
+              echo "Waiting for server to start (this may take a while for model loading)..."
+              for i in {1..120}; do
+                if ${defaultPkgs.curl}/bin/curl -s http://127.0.0.1:18000/health >/dev/null 2>&1; then
+                  echo "Server is ready!"
+                  break
                 fi
+                if [ $i -eq 120 ]; then
+                  echo "Server failed to start within 120 seconds"
+                  exit 1
+                fi
+                if [ $((i % 10)) -eq 0 ]; then
+                  echo "Attempt $i/120 - still waiting for server..."
+                fi
+                sleep 1
               done
 
-              if [ $MATCHES -ge 5 ]; then
-                echo "Transcription quality check passed ($MATCHES/$TOTAL_WORDS key words matched)"
+              # Test health endpoint
+              echo "Testing health endpoint..."
+              if ${defaultPkgs.curl}/bin/curl -s http://127.0.0.1:18000/health | grep -q "OK"; then
+                echo "Health check passed"
               else
-                echo "Transcription quality check: only $MATCHES/$TOTAL_WORDS key words matched"
+                echo "Health check failed"
+                exit 1
               fi
-            else
-              echo "STT test failed (HTTP $STT_RESPONSE)"
-              if [ -f transcription.json ]; then
-                echo "Response content:"
-                cat transcription.json
-              fi
-              exit 1
-            fi
 
-            echo "=== Complete End-to-End Test Passed! ==="
-            echo "TTS: Text -> Audio conversion working"
-            echo "STT: Audio -> Text conversion working"
-            echo "Models loaded and functioning offline"
-            echo "Test artifacts in: $TEST_DIR"
-          '';
+              # Test model listing
+              echo "Testing model listing..."
+              ${defaultPkgs.curl}/bin/curl -s http://127.0.0.1:18000/v1/models -o models.json
+              if [ -f models.json ] && ${defaultPkgs.jq}/bin/jq -e '.data' models.json >/dev/null; then
+                echo "Model listing endpoint works"
+                echo "Available models:"
+                ${defaultPkgs.jq}/bin/jq -r '.data[].id' models.json
+              else
+                echo "Model listing failed"
+                exit 1
+              fi
+
+              ORIGINAL_TEXT="People assume that time is a strict progression of cause to effect. But actually, from a nonlinear, non-subjective viewpoint, it is more like a big ball of wibbly wobbly, timey wimey stuff"
+
+              # Test TTS (Text-to-Speech) with real model
+              echo "Testing TTS with Kokoro model..."
+              TTS_RESPONSE=$(${defaultPkgs.curl}/bin/curl -s -w "%{http_code}" -X POST "http://127.0.0.1:18000/v1/audio/speech" \
+                -H "Content-Type: application/json" \
+                -d "{\"model\": \"tts-1\", \"input\": \"$ORIGINAL_TEXT\", \"voice\": \"af_bella\"}" \
+                -o test_tts_output.wav)
+
+              if [[ "$TTS_RESPONSE" =~ ^2[0-9][0-9]$ ]] && [ -f test_tts_output.wav ] && [ -s test_tts_output.wav ]; then
+                echo "TTS test passed - generated $(du -h test_tts_output.wav | cut -f1) audio file"
+                ${defaultPkgs.file}/bin/file test_tts_output.wav
+              else
+                echo "TTS test failed (HTTP $TTS_RESPONSE)"
+                exit 1
+              fi
+
+              # Test STT (Speech-to-Text) with the generated audio
+              echo "Testing STT with Whisper base model using generated audio..."
+              STT_RESPONSE=$(${defaultPkgs.curl}/bin/curl -s -w "%{http_code}" -X POST "http://127.0.0.1:18000/v1/audio/transcriptions" \
+                -F "file=@test_tts_output.wav" \
+                -F "model=Systran/faster-whisper-base" \
+                -o transcription.json)
+
+              if [[ "$STT_RESPONSE" =~ ^2[0-9][0-9]$ ]] && [ -f transcription.json ] && ${defaultPkgs.jq}/bin/jq -e '.text' transcription.json >/dev/null; then
+                echo "STT test passed - got transcription"
+                echo "Original text: $ORIGINAL_TEXT"
+                echo "Transcription: $(${defaultPkgs.jq}/bin/jq -r '.text' transcription.json)"
+
+                # Check if transcription is reasonably similar (basic check)
+                ORIGINAL_WORDS=$(echo "$ORIGINAL_TEXT" | tr '[:upper:]' '[:lower:]' | sed 's/[.,!?]//g')
+                TRANSCRIBED=$(${defaultPkgs.jq}/bin/jq -r '.text' transcription.json | tr '[:upper:]' '[:lower:]' | sed 's/[.,!?]//g')
+
+                TOTAL_WORDS=$(echo $ORIGINAL_WORDS | wc -w)
+
+                MATCHES=0
+                for word in $ORIGINAL_WORDS; do
+                  if echo "$TRANSCRIBED" | grep -q "$word"; then
+                    MATCHES=$((MATCHES + 1))
+                  fi
+                done
+
+                if [ $MATCHES -ge 5 ]; then
+                  echo "Transcription quality check passed ($MATCHES/$TOTAL_WORDS key words matched)"
+                else
+                  echo "Transcription quality check: only $MATCHES/$TOTAL_WORDS key words matched"
+                fi
+              else
+                echo "STT test failed (HTTP $STT_RESPONSE)"
+                if [ -f transcription.json ]; then
+                  echo "Response content:"
+                  cat transcription.json
+                fi
+                exit 1
+              fi
+
+              echo "=== Complete End-to-End Test Passed! ==="
+              echo "TTS: Text -> Audio conversion working"
+              echo "STT: Audio -> Text conversion working"
+              echo "Models loaded and functioning offline"
+              echo "Test artifacts in: $TEST_DIR"
+            '';
           devCustomDeps = import ./nix/dependencies.nix {
             pkgs = devPkgs;
             pyPackages = devPkgs.python312.pkgs;
@@ -651,7 +648,6 @@
                     pydantic
                     pydantic-settings
                     python-multipart
-                    sounddevice
                     soundfile
                     uvicorn
                     openai
@@ -675,15 +671,11 @@
                       aiortc
                       onnx_asr
                       espeakng_loader
-                      pytest_antilru
                       opentelemetry_instrumentation_asyncio
                       opentelemetry_instrumentation_httpx
-                      opentelemetry_instrumentation_openai
-                      opentelemetry_instrumentation_openai_v2
                     ]
                     ++ lib.optionals stdenv.isLinux [
                       piper_tts
-                      piper_phonemize
                     ]
                   )
                 ))
@@ -712,25 +704,23 @@
                 ]
               );
 
-            LD_LIBRARY_PATH =
-              devPkgs.lib.optionalString isLinux
-                "/run/opengl-driver/lib:${
-                  devPkgs.lib.makeLibraryPath (
-                    with devPkgs;
-                    [
-                      cudaPackages_12.cudnn
-                      cudaPackages_12.libcublas
-                      cudaPackages_12.libcurand
-                      cudaPackages_12.libcufft
-                      cudaPackages_12.cuda_cudart
-                      cudaPackages_12.cuda_nvrtc
-                      portaudio
-                      zlib
-                      stdenv.cc.cc
-                      openssl
-                    ]
-                  )
-                }";
+            LD_LIBRARY_PATH = devPkgs.lib.optionalString isLinux "/run/opengl-driver/lib:${
+              devPkgs.lib.makeLibraryPath (
+                with devPkgs;
+                [
+                  cudaPackages_12.cudnn
+                  cudaPackages_12.libcublas
+                  cudaPackages_12.libcurand
+                  cudaPackages_12.libcufft
+                  cudaPackages_12.cuda_cudart
+                  cudaPackages_12.cuda_nvrtc
+                  portaudio
+                  zlib
+                  stdenv.cc.cc
+                  openssl
+                ]
+              )
+            }";
 
             shellHook = ''
               source .venv/bin/activate 2>/dev/null || true
