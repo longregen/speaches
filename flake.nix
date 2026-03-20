@@ -25,6 +25,7 @@
       perSystem =
         system:
         let
+          isLinux = (system == "x86_64-linux" || system == "aarch64-linux");
           bundleHash = "sha256-3s4rWTs1W3rvzUUaM1si3dKr2gUPqQNerUnFamhls0M=";
           mkOverlay =
             {
@@ -33,7 +34,7 @@
             }:
             final: prev:
             let
-              isCuda = cudaSupport && system == "x86_64-linux";
+              isCuda = cudaSupport && isLinux;
               pyPackages = prev."${pythonVersion}Packages";
               targetPyVersion = prev.${pythonVersion}.pythonVersion;
             in
@@ -104,7 +105,7 @@
           mkSpeaches =
             {
               pythonVersion ? "python312",
-              withCuda ? (system == "x86_64-linux"),
+              withCuda ? isLinux,
               withDev ? false,
             }:
             let
@@ -159,7 +160,7 @@
                     customDeps.onnx_diarization
                   ];
 
-                  # Piper TTS dependencies (Linux x86_64 only)
+                  # Piper TTS dependencies (Linux only)
                   piperDeps = pkgs.lib.optionals (customDeps.piper_tts != null) [
                     customDeps.piper_tts
                     customDeps.piper_phonemize
@@ -699,7 +700,7 @@
                 websocat
                 basedpyright
               ]
-              ++ devPkgs.lib.optionals (system == "x86_64-linux") (
+              ++ devPkgs.lib.optionals isLinux (
                 with devPkgs;
                 [
                   cudaPackages_12.cudnn
@@ -712,7 +713,7 @@
               );
 
             LD_LIBRARY_PATH =
-              devPkgs.lib.optionalString (system == "x86_64-linux")
+              devPkgs.lib.optionalString isLinux
                 "/run/opengl-driver/lib:${
                   devPkgs.lib.makeLibraryPath (
                     with devPkgs;

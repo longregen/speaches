@@ -232,29 +232,42 @@ rec {
   kaldi_native_fbank =
     let
       pythonVersion = pyPackages.python.pythonVersion;
-      wheelSrc = {
-        "3.12" = pkgs.fetchurl {
-          url = "https://files.pythonhosted.org/packages/84/90/01ef7331c52b1eaf9916f3f7a535155aac2e9e2ddad12a141613d92758c7/kaldi_native_fbank-1.22.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
-          hash = "sha256-8W50Ny/p4gq7QYP5io4iiNXuTEjQTZS2FgMRFw4AdmE=";
+      srcs = {
+        "x86_64-linux" = {
+          "3.12" = pkgs.fetchurl {
+            url = "https://files.pythonhosted.org/packages/84/90/01ef7331c52b1eaf9916f3f7a535155aac2e9e2ddad12a141613d92758c7/kaldi_native_fbank-1.22.3-cp312-cp312-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
+            hash = "sha256-8W50Ny/p4gq7QYP5io4iiNXuTEjQTZS2FgMRFw4AdmE=";
+          };
+          "3.13" = pkgs.fetchurl {
+            url = "https://files.pythonhosted.org/packages/bc/1e/496c7ae814b2a7f8f47d423dc33aae2cdfb1edf898e2faaf5c5b39b90363/kaldi_native_fbank-1.22.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
+            hash = "sha256-4/nGVR/1tq54XdFfgZw7K3Qy13v7eeqIBnSOLH2QC10=";
+          };
+          "3.14" = pkgs.fetchurl {
+            url = "https://files.pythonhosted.org/packages/2b/6a/374ec4e1cf13e672f5acd8272116c1885c2a7f84be491fc652415fc6e870/kaldi_native_fbank-1.22.3-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
+            hash = "sha256-8cwrju7FKjOGjPWbuV1AszX6nP9+FaYgjg6bZ7f9cjY=";
+          };
         };
-        "3.13" = pkgs.fetchurl {
-          url = "https://files.pythonhosted.org/packages/bc/1e/496c7ae814b2a7f8f47d423dc33aae2cdfb1edf898e2faaf5c5b39b90363/kaldi_native_fbank-1.22.3-cp313-cp313-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
-          hash = "sha256-4/nGVR/1tq54XdFfgZw7K3Qy13v7eeqIBnSOLH2QC10=";
+        "aarch64-linux" = {
+          "3.12" = pkgs.fetchurl {
+            url = "https://files.pythonhosted.org/packages/43/28/6f4fd8953c0b3f30de4526fd024095032abcdc25b6736c77a891687c604e/kaldi_native_fbank-1.22.3-cp312-cp312-manylinux2014_aarch64.manylinux_2_17_aarch64.whl";
+            hash = "sha256-9aRLSoPPm/E9P3eFiSgGiwbT7CI4wn/y45OT+/d0nJ8=";
+          };
         };
-        "3.14" = pkgs.fetchurl {
-          url = "https://files.pythonhosted.org/packages/2b/6a/374ec4e1cf13e672f5acd8272116c1885c2a7f84be491fc652415fc6e870/kaldi_native_fbank-1.22.3-cp314-cp314-manylinux2014_x86_64.manylinux_2_17_x86_64.whl";
-          hash = "sha256-8cwrju7FKjOGjPWbuV1AszX6nP9+FaYgjg6bZ7f9cjY=";
-        };
-      }.${pythonVersion} or (throw "kaldi_native_fbank: unsupported Python ${pythonVersion}");
+      };
+      archSrcs = srcs.${system} or {};
+      wheelSrc = archSrcs.${pythonVersion} or null;
     in
-    pyPackages.buildPythonPackage {
-      pname = "kaldi_native_fbank";
-      version = "1.22.3";
-      format = "wheel";
-      src = wheelSrc;
-      propagatedBuildInputs = with pyPackages; [ numpy ];
-      doCheck = false;
-    };
+    if wheelSrc == null then
+      null
+    else
+      pyPackages.buildPythonPackage {
+        pname = "kaldi_native_fbank";
+        version = "1.22.3";
+        format = "wheel";
+        src = wheelSrc;
+        propagatedBuildInputs = with pyPackages; [ numpy ];
+        doCheck = false;
+      };
 
   onnx_dl = pyPackages.buildPythonPackage {
     pname = "onnx_dl";
@@ -309,34 +322,53 @@ rec {
     doCheck = false;
   };
 
-  # Piper TTS packages (x86_64-linux only)
-  isLinuxX86 = system == "x86_64-linux";
-
+  # Piper TTS packages (Linux only)
   piper_phonemize =
-    if isLinuxX86 then
+    let
+      srcs = {
+        "x86_64-linux" = pkgs.fetchurl {
+          url = "https://github.com/fedirz/piper-phonemize/raw/refs/heads/master/dist/piper_phonemize-1.2.0-cp312-cp312-manylinux_2_28_x86_64.whl";
+          hash = "sha256-E7/QdVBXIELF5t2NQAdr8kEBqTCvDHoSZUJyFydSJbM=";
+        };
+        "aarch64-linux" = pkgs.fetchurl {
+          url = "https://github.com/fedirz/piper-phonemize/raw/refs/heads/master/dist/piper_phonemize-1.2.0-cp312-cp312-manylinux_2_28_aarch64.whl";
+          hash = "sha256-yPUnkHN6985spmC7M9lTmq7tBemkd89MtJCCuxQrzRM=";
+        };
+      };
+      wheelSrc = srcs.${system} or null;
+    in
+    if wheelSrc != null then
       pyPackages.buildPythonPackage {
         pname = "piper_phonemize";
         version = "1.2.0";
         format = "wheel";
-        src = pkgs.fetchurl {
-          url = "https://github.com/fedirz/piper-phonemize/raw/refs/heads/master/dist/piper_phonemize-1.2.0-cp312-cp312-manylinux_2_28_x86_64.whl";
-          hash = "sha256-E7/QdVBXIELF5t2NQAdr8kEBqTCvDHoSZUJyFydSJbM=";
-        };
+        src = wheelSrc;
         doCheck = false;
       }
     else
       null;
 
   piper_tts =
-    if pkgs.stdenv.isLinux && isLinuxX86 then
-      pyPackages.buildPythonPackage {
-        pname = "piper_tts";
-        version = "1.4.1";
-        format = "wheel";
-        src = pkgs.fetchurl {
+    let
+      srcs = {
+        "x86_64-linux" = pkgs.fetchurl {
           url = "https://files.pythonhosted.org/packages/39/42/b44ae16ef80d86173518aafe2a493a826b46f9fe4fba1b82cd575117d5ac/piper_tts-1.4.1-cp39-abi3-manylinux_2_17_x86_64.manylinux2014_x86_64.manylinux_2_28_x86_64.whl";
           hash = "sha256-WqUzNkwVJI0pMrzDYusHQN580o3DQjPejfLuPG8q3wA=";
         };
+        "aarch64-linux" = pkgs.fetchurl {
+          url = "https://files.pythonhosted.org/packages/8c/92/f37e5111440fc6c6336f42f8dab88afaa545394784dc930f808a68883c48/piper_tts-1.3.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.manylinux_2_28_aarch64.whl";
+          hash = "sha256-jTn4XD9Lat5RKXaElXk0T8cllexhPzdNvPhSFxY5iQc=";
+        };
+      };
+      wheelSrc = srcs.${system} or null;
+      version = if system == "aarch64-linux" then "1.3.0" else "1.4.1";
+    in
+    if wheelSrc != null then
+      pyPackages.buildPythonPackage {
+        pname = "piper_tts";
+        inherit version;
+        format = "wheel";
+        src = wheelSrc;
         propagatedBuildInputs = [ piper_phonemize pyPackages.onnxruntime ];
         doCheck = false;
       }
