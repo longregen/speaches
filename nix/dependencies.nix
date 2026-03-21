@@ -23,7 +23,9 @@ rec {
         --replace-fail 'libespeak-ng' '${pkgs.espeak-ng}/lib/libespeak-ng' \
         --replace-fail "Path(__file__).parent / 'espeak-ng-data'" "Path('${pkgs.espeak-ng}/share/espeak-ng-data')"
     '';
+    # No test suite in repository
     doCheck = false;
+    pythonImportsCheck = [ "espeakng_loader" ];
   };
 
   kokoro_onnx = pyPackages.buildPythonPackage rec {
@@ -52,7 +54,9 @@ rec {
         espeakng_loader
         phonemizer_fork
       ];
+    # No test suite in repository
     doCheck = false;
+    pythonImportsCheck = [ "kokoro_onnx" ];
   };
 
   # Simplified aiortc-related packages
@@ -70,7 +74,13 @@ rec {
       dnspython
       ifaddr
     ];
-    doCheck = false;
+    nativeCheckInputs = [ pyPackages.pytestCheckHook ];
+    disabledTestPaths = [
+      "tests/test_ice.py"
+      "tests/test_mdns.py"
+      "tests/test_turn.py"
+      "tests/test_ice_trickle.py"
+    ];
   };
 
   pylibsrtp = pyPackages.buildPythonPackage {
@@ -89,7 +99,7 @@ rec {
       pkgs.openssl
     ];
     propagatedBuildInputs = [ pyPackages.cffi ];
-    doCheck = false;
+    nativeCheckInputs = [ pyPackages.pytestCheckHook ];
   };
 
   aiortc = pyPackages.buildPythonPackage rec {
@@ -121,7 +131,16 @@ rec {
       libopus
       srtp
     ];
-    doCheck = false;
+    nativeCheckInputs = with pyPackages; [
+      numpy
+      pytestCheckHook
+    ];
+    disabledTestPaths = [
+      "tests/test_ortc.py"
+      "tests/test_rtcicetransport.py"
+      "tests/test_rtcpeerconnection.py"
+      "tests/test_contrib_signaling.py"
+    ];
   };
 
   # Override csvw to avoid frictionless -> moto -> sagemaker -> google-pasta
@@ -151,8 +170,15 @@ rec {
       termcolor
       jsonschema
     ];
+    nativeCheckInputs = with pyPackages; [
+      pytestCheckHook
+      pytest-cov-stub
+      pytest-mock
+      requests-mock
+    ];
+    disabledTests = [ "test_write_file_exists" ];
+    disabledTestPaths = [ "tests/test_conformance.py" ];
     dontCheckRuntimeDeps = true;
-    doCheck = false;
   };
 
   # Override segments to use our csvw (without frictionless)
@@ -171,8 +197,12 @@ rec {
       regex
       csvw
     ];
+    nativeCheckInputs = with pyPackages; [
+      pytestCheckHook
+      pytest-cov-stub
+      pytest-mock
+    ];
     dontCheckRuntimeDeps = true;
-    doCheck = false;
   };
 
   phonemizer_fork = pyPackages.buildPythonPackage {
@@ -195,7 +225,23 @@ rec {
         doCheck = false;
       }))
     ];
-    doCheck = false;
+    nativeCheckInputs = with pyPackages; [
+      pytestCheckHook
+      pytest-cov
+    ];
+    checkInputs = [ pkgs.espeak-ng ];
+    preCheck = ''
+      export PATH="${pkgs.espeak-ng}/bin:$PATH"
+      export ESPEAK_DATA_PATH="${pkgs.espeak-ng}/share/espeak-ng-data"
+    '';
+    disabledTestPaths = [
+      # festival backend is not available in Nix
+      "test/test_festival.py"
+    ];
+    disabledTests = [
+      # tests that specifically test the festival backend
+      "test_festival"
+    ];
   };
 
   # onnx_asr has a custom hatch build hook that generates .onnx preprocessor models
@@ -225,7 +271,18 @@ rec {
       onnxruntime
       huggingface-hub
     ];
-    doCheck = false;
+    nativeCheckInputs = with pyPackages; [
+      pytestCheckHook
+      pytest-cov
+    ];
+    disabledTestPaths = [
+      # Requires downloading models from HuggingFace
+      "tests/onnx_asr/test_recognize.py"
+      "tests/onnx_asr/test_cli.py"
+      "tests/onnx_asr/test_load_model_errors.py"
+      # Requires pre-built ONNX preprocessor models
+      "tests/preprocessors"
+    ];
   };
 
   # onnx-diarization and its dependencies
@@ -240,7 +297,16 @@ rec {
       hash = "sha256-d5Vbtkw/MChS2j2IC6j97wfVoKWZT9mU4OeXyEjm6ys=";
     };
     nativeBuildInputs = [ pyPackages.hatchling ];
-    doCheck = false;
+    env.EINOPS_TEST_BACKENDS = "numpy";
+    nativeCheckInputs = with pyPackages; [
+      numpy
+      parameterized
+      pytestCheckHook
+    ];
+    disabledTestPaths = [
+      # notebook samples depend on large packages or accelerator access
+      "scripts/"
+    ];
   };
 
   kaldi_native_fbank =
@@ -278,7 +344,9 @@ rec {
         cp ${kissfft-src} $PWD/kissfft-febd4caeed32e33ad8b2e0bb5ea77542c40f18ec.zip
       '';
       dontUseCmakeConfigure = true;
+      # No Python test suite; C++ tests require separate cmake build
       doCheck = false;
+      pythonImportsCheck = [ "kaldi_native_fbank" ];
     };
 
   onnx_dl = pyPackages.buildPythonPackage {
@@ -296,7 +364,9 @@ rec {
       sed -i 's/requires = \["uv_build[^"]*"\]/requires = ["uv_build"]/' pyproject.toml
     '';
     propagatedBuildInputs = with pyPackages; [ onnxruntime ];
+    # Tests require pre-cached HuggingFace models
     doCheck = false;
+    pythonImportsCheck = [ "onnx_dl" ];
   };
 
   pyannote_core = pyPackages.buildPythonPackage {
@@ -318,7 +388,8 @@ rec {
       pandas
       sortedcontainers
     ];
-    doCheck = false;
+    nativeCheckInputs = [ pyPackages.pytestCheckHook ];
+    pythonImportsCheck = [ "pyannote.core" ];
   };
 
   onnx_diarization = pyPackages.buildPythonPackage {
@@ -349,7 +420,9 @@ rec {
         pyannote_core
       ];
     dontCheckRuntimeDeps = true;
+    # All tests require pre-cached models or network access
     doCheck = false;
+    pythonImportsCheck = [ "onnx_diarization" ];
   };
 
   # Piper TTS packages (Linux only)
@@ -425,7 +498,15 @@ rec {
           ln -s ${espeak-ng'}/share/espeak-ng-data $out/${pyPackages.python.sitePackages}/piper/
         '';
 
-        doCheck = false;
+        nativeCheckInputs = [ pyPackages.pytestCheckHook ];
+        preCheck = ''
+          export PATH="${espeak-ng'}/bin:$PATH"
+          export ESPEAK_DATA_PATH="${espeak-ng'}/share/espeak-ng-data"
+        '';
+        disabledTestPaths = [
+          # Requires libtashkeel ONNX model download
+          "tests/test_tashkeel.py"
+        ];
       }
     else
       null;
@@ -452,7 +533,9 @@ rec {
       opentelemetry-semantic-conventions
       wrapt
     ];
+    # Tests require opentelemetry-test-utils which is not in nixpkgs
     doCheck = false;
+    pythonImportsCheck = [ "opentelemetry.instrumentation.asyncio" ];
     dontCheckRuntimeDeps = true;
   };
 
@@ -472,7 +555,9 @@ rec {
       opentelemetry-util-http
       wrapt
     ];
+    # Tests require opentelemetry-test-utils and respx which are not in nixpkgs
     doCheck = false;
+    pythonImportsCheck = [ "opentelemetry.instrumentation.httpx" ];
     dontCheckRuntimeDeps = true;
   };
 
