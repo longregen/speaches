@@ -60,10 +60,11 @@ rec {
     pname = "aioice";
     version = "0.10.2";
     format = "setuptools";
-    src = pyPackages.fetchPypi {
-      pname = "aioice";
-      version = "0.10.2";
-      hash = "sha256-vyNsaCnuM8jlQFNdMc1aBmtTHLVt4r6UxGvnbWixqAY=";
+    src = pkgs.fetchFromGitHub {
+      owner = "aiortc";
+      repo = "aioice";
+      tag = "0.10.2";
+      hash = "sha256-UEXkTxcpe6mlA2FmMSfDmtcEYE9zwuitpi2Eh188xZc=";
     };
     propagatedBuildInputs = with pyPackages; [
       dnspython
@@ -76,10 +77,11 @@ rec {
     pname = "pylibsrtp";
     version = "1.0.0";
     format = "setuptools";
-    src = pyPackages.fetchPypi {
-      pname = "pylibsrtp";
-      version = "1.0.0";
-      hash = "sha256-s53/B1smOo3tU3fySQxg0q9FLJ8GxNBhx6K2QGErNNQ=";
+    src = pkgs.fetchFromGitHub {
+      owner = "aiortc";
+      repo = "pylibsrtp";
+      tag = "1.0.0";
+      hash = "sha256-Q8EyGAJKkq14sqSEMWLB8arKvj/wuALK/XwOZ27F1nQ=";
     };
     nativeBuildInputs = [ pyPackages.cffi ];
     buildInputs = [
@@ -94,10 +96,11 @@ rec {
     pname = "aiortc";
     version = "1.14.0";
     format = "setuptools";
-    src = pyPackages.fetchPypi {
-      pname = "aiortc";
-      version = "1.14.0";
-      hash = "sha256-rcimes4QoIVyHliOBqADWO2Or19rYvCpU1j/RWKN12I=";
+    src = pkgs.fetchFromGitHub {
+      owner = "aiortc";
+      repo = "aiortc";
+      tag = "1.14.0";
+      hash = "sha256-ZgxSaiKkJrA5XvUT1zq8kwqB8mOvn46vLWXHyJSsHbM=";
     };
     propagatedBuildInputs =
       with pyPackages;
@@ -128,10 +131,11 @@ rec {
     pname = "csvw";
     version = "3.7.0";
     format = "setuptools";
-    src = pyPackages.fetchPypi {
-      pname = "csvw";
-      version = "3.7.0";
-      hash = "sha256-hptcdhSB5SwBqZ+0dJsnikuLDbTg+hllozo0QccDRls=";
+    src = pkgs.fetchFromGitHub {
+      owner = "cldf";
+      repo = "csvw";
+      tag = "v3.7.0";
+      hash = "sha256-HftvI4xJy/MX0WTIFNyZqNqIJIlHsWhhURpeQ1XqrT0=";
     };
     nativeBuildInputs = [ pyPackages.setuptools ];
     propagatedBuildInputs = with pyPackages; [
@@ -156,10 +160,11 @@ rec {
     pname = "segments";
     version = "2.4.0";
     format = "setuptools";
-    src = pyPackages.fetchPypi {
-      pname = "segments";
-      version = "2.4.0";
-      hash = "sha256-u6cfVSDd1UyKovTXZaYGGMaGIWLW5zVqSgl/IiMWb1s=";
+    src = pkgs.fetchFromGitHub {
+      owner = "cldf";
+      repo = "segments";
+      tag = "v2.4.0";
+      hash = "sha256-XhJH87Bb9wGNPpPymRjgPYLv2zr4hGAyIAbTMk0uCU0=";
     };
     nativeBuildInputs = [ pyPackages.setuptools ];
     propagatedBuildInputs = with pyPackages; [
@@ -172,12 +177,13 @@ rec {
 
   phonemizer_fork = pyPackages.buildPythonPackage {
     pname = "phonemizer-fork";
-    version = "3.3.2";
+    version = "3.3.2-git";
     format = "pyproject";
-    src = pyPackages.fetchPypi {
-      pname = "phonemizer_fork";
-      version = "3.3.2";
-      hash = "sha256-EOFugn0EQ7CHBi4htV6AXACYnPE0Oy6B5zTK5fbAz2k=";
+    src = pkgs.fetchFromGitHub {
+      owner = "thewh1teagle";
+      repo = "phonemizer-fork";
+      rev = "2d74b9863f48f98557f3605fdb434c928629861d"; # dev branch; no tags published
+      hash = "sha256-0exVEQgi/+L9V0h+K9lUaWICtmILRnb//izGyjOVID0=";
     };
     nativeBuildInputs = [ pyPackages.hatchling ];
     propagatedBuildInputs = with pyPackages; [
@@ -199,10 +205,11 @@ rec {
     pname = "onnx_asr";
     version = "0.10.2";
     format = "pyproject";
-    src = pyPackages.fetchPypi {
-      pname = "onnx_asr";
-      version = "0.10.2";
-      hash = "sha256-cDgZOc+C0CwSV1N+f1glw12xUAjMAqXEOk5ittWsuzQ=";
+    src = pkgs.fetchFromGitHub {
+      owner = "istupakov";
+      repo = "onnx-asr";
+      tag = "v0.10.2";
+      hash = "sha256-KumdelY9oNMAEBSGVdvbBH6SYi93n2cA/eEqaE8MmIU=";
     };
     nativeBuildInputs = with pyPackages; [
       hatchling
@@ -226,10 +233,11 @@ rec {
     pname = "einops";
     version = "0.8.2";
     format = "pyproject";
-    src = pyPackages.fetchPypi {
-      pname = "einops";
-      version = "0.8.2";
-      hash = "sha256-YJ2mZVcOXiZeJyg6qwnn8nmt6QxPAbz8oRHz0+E/KCc=";
+    src = pkgs.fetchFromGitHub {
+      owner = "arogozhnikov";
+      repo = "einops";
+      tag = "v0.8.2";
+      hash = "sha256-d5Vbtkw/MChS2j2IC6j97wfVoKWZT9mU4OeXyEjm6ys=";
     };
     nativeBuildInputs = [ pyPackages.hatchling ];
     doCheck = false;
@@ -275,12 +283,13 @@ rec {
 
   onnx_dl = pyPackages.buildPythonPackage {
     pname = "onnx_dl";
-    version = "0.1.0";
+    version = "0.1.0-git";
     format = "pyproject";
-    src = pyPackages.fetchPypi {
-      pname = "onnx_dl";
-      version = "0.1.0";
-      hash = "sha256-9wRHepJ8jod77OhA/DDh8lZIm+IlIyhdpumCqFN6lxs=";
+    src = pkgs.fetchFromGitHub {
+      owner = "fedirz";
+      repo = "onnx-dl";
+      rev = "9ef51fc5e980"; # init commit; no tags published
+      hash = "sha256-tWkxIFLhTFhfNsQkkvfXWdPD1f75wxX9sBFWvV6PGX8=";
     };
     nativeBuildInputs = [ pyPackages.uv-build ];
     postPatch = ''
@@ -294,10 +303,11 @@ rec {
     pname = "pyannote_core";
     version = "6.0.1";
     format = "pyproject";
-    src = pyPackages.fetchPypi {
-      pname = "pyannote_core";
-      version = "6.0.1";
-      hash = "sha256-S0raMnb2304HP6eRZmNuNZfQ3LWg/iYBSjR3hnzAM/s=";
+    src = pkgs.fetchFromGitHub {
+      owner = "pyannote";
+      repo = "pyannote-core";
+      tag = "6.0.1";
+      hash = "sha256-r5NkOAzrQGcb6LPi4/DA0uT9R0ELiYuwQkbT1l6R8Mw=";
     };
     nativeBuildInputs = with pyPackages; [
       hatchling
@@ -313,12 +323,13 @@ rec {
 
   onnx_diarization = pyPackages.buildPythonPackage {
     pname = "onnx_diarization";
-    version = "0.1.0";
+    version = "0.1.0-git";
     format = "pyproject";
-    src = pyPackages.fetchPypi {
-      pname = "onnx_diarization";
-      version = "0.1.0";
-      hash = "sha256-CFEeNDfXr1vR9wNJ0BG/kpqFNaTUmAXBQvx9tmb5xOU=";
+    src = pkgs.fetchFromGitHub {
+      owner = "fedirz";
+      repo = "onnx-diarization";
+      rev = "9662cf34bb16"; # init commit; no tags published
+      hash = "sha256-3tkgVEqVyOHFYKssJPkSS51eUx9Tw2a2p3jVI2pkQOI=";
     };
     nativeBuildInputs = [ pyPackages.uv-build ];
     postPatch = ''
@@ -419,16 +430,19 @@ rec {
     else
       null;
 
-  # OpenTelemetry instrumentation packages
+  # OpenTelemetry instrumentation packages (from monorepo)
+  otelContribSrc = pkgs.fetchFromGitHub {
+    owner = "open-telemetry";
+    repo = "opentelemetry-python-contrib";
+    tag = "v0.61b0";
+    hash = "sha256-DT13gcYPNYXBPnf622WsA16C+7sabJfOshDquHn06Ok=";
+  };
+
   opentelemetry_instrumentation_asyncio = pyPackages.buildPythonPackage {
     pname = "opentelemetry-instrumentation-asyncio";
     version = "0.61b0";
     format = "pyproject";
-    src = pyPackages.fetchPypi {
-      pname = "opentelemetry_instrumentation_asyncio";
-      version = "0.61b0";
-      hash = "sha256-Oxc7AJ8Qj8vG7k90gueui3ZRioemIK1efdJOTCYGbDw=";
-    };
+    src = "${otelContribSrc}/instrumentation/opentelemetry-instrumentation-asyncio";
     nativeBuildInputs = with pyPackages; [
       hatchling
     ];
@@ -446,11 +460,7 @@ rec {
     pname = "opentelemetry-instrumentation-httpx";
     version = "0.61b0";
     format = "pyproject";
-    src = pyPackages.fetchPypi {
-      pname = "opentelemetry_instrumentation_httpx";
-      version = "0.61b0";
-      hash = "sha256-ZWnsCXlGxVUcKkJS90yYZmrd0b8EfB3ea070JnGf+N0=";
-    };
+    src = "${otelContribSrc}/instrumentation/opentelemetry-instrumentation-httpx";
     nativeBuildInputs = with pyPackages; [
       hatchling
     ];
