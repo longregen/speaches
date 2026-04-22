@@ -29,13 +29,13 @@ def http_client_from_gradio_req(
     return httpx.AsyncClient(
         base_url=base_url,
         timeout=TIMEOUT,
-        headers=headers if headers else None,
+        headers=headers or None,
     )
 
 
 def openai_client_from_gradio_req(request: gr.Request, config: Config, user_api_key: str | None = None) -> AsyncOpenAI:
     base_url = base_url_from_gradio_req(request, config)
-    api_key_value = user_api_key if user_api_key else "cant-be-empty"
+    api_key_value = user_api_key or "cant-be-empty"
     return AsyncOpenAI(
         base_url=f"{base_url}/v1",
         api_key=api_key_value,

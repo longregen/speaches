@@ -1,6 +1,4 @@
-import asyncio
 import base64
-from collections.abc import AsyncGenerator, Generator
 from datetime import UTC, datetime
 import io
 import logging
@@ -12,6 +10,15 @@ import numpy as np
 import soundfile as sf
 
 logger = logging.getLogger(__name__)
+
+
+class CudaOutOfMemoryError(Exception):
+    def __init__(self, audio_duration: float | None = None) -> None:
+        self.audio_duration = audio_duration
+        super().__init__(
+            "GPU ran out of memory while processing audio"
+            + (f" ({audio_duration:.1f}s)" if audio_duration is not None else "")
+        )
 
 
 class APIProxyError(Exception):
@@ -61,52 +68,6 @@ def format_api_proxy_error(exc: "APIProxyError", context: str = "") -> str:
         f"Debug: {exc.debug}\nContext: {context}\nTimestamp: {exc.timestamp}" if debug_mode and exc.debug else ""
     )
     return f"[ERROR] {user_message}\nSuggestions: {', '.join(suggestions)}" + (f"\n{debug_info}" if debug_info else "")
-
-
-def async_to_sync_generator[T](async_gen: AsyncGenerator[T]) -> Generator[T]:
-    try:
-        # Try to get the current event loop
-        loop = asyncio.get_running_loop()
-    except RuntimeError:
-        # No running loop, create a new one
-        loop = asyncio.new_event_loop()
-        asyncio.set_event_loop(loop)
-        should_close_loop = True
-    else:
-        should_close_loop = False
-
-    try:
-        while True:
-            try:
-                # Get the next item from the async generator
-                if should_close_loop:
-                    item = loop.run_until_complete(async_gen.__anext__())
-                else:
-                    # If there's already a running loop, we need to run in a thread
-                    import concurrent.futures
-
-                    with concurrent.futures.ThreadPoolExecutor() as executor:
-                        future = executor.submit(asyncio.run, async_gen.__anext__())
-                        item = future.result()
-                yield item
-            except StopAsyncIteration:
-                break
-    finally:
-        # Clean up the async generator
-        try:
-            if should_close_loop:
-                loop.run_until_complete(async_gen.aclose())
-            else:
-                import concurrent.futures
-
-                with concurrent.futures.ThreadPoolExecutor() as executor:
-                    future = executor.submit(asyncio.run, async_gen.aclose())
-                    future.result()
-        except Exception:  # noqa: BLE001, S110
-            pass  # Ignore cleanup errors
-
-        if should_close_loop:
-            loop.close()
 
 
 # TODO: maybe add length validation. gte 2s lte 10s
