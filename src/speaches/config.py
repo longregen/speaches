@@ -1,14 +1,31 @@
+import platform
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from speaches import DEFAULT_GPU_MEM_LIMIT
+
 type Device = Literal["cpu", "cuda", "auto"]
 
 # https://github.com/OpenNMT/CTranslate2/blob/master/docs/quantization.md#quantize-on-model-conversion
 type Quantization = Literal[
-    "int8", "int8_float16", "int8_bfloat16", "int8_float32", "int16", "float16", "bfloat16", "float32", "default"
+    "auto",
+    "int8",
+    "int8_float16",
+    "int8_bfloat16",
+    "int8_float32",
+    "int16",
+    "float16",
+    "bfloat16",
+    "float32",
+    "default",
 ]
+
+# float32 is ~27% faster than int8 on Apple Silicon (ARM NEON int8 quantization
+# overhead outweighs memory savings). On x86/CUDA, int8 remains faster.
+_IS_APPLE_SILICON = platform.machine() == "arm64" and platform.system() == "Darwin"
+_DEFAULT_COMPUTE_TYPE: Quantization = "float32" if _IS_APPLE_SILICON else "int8"
 
 
 class WhisperConfig(BaseModel):
@@ -16,9 +33,24 @@ class WhisperConfig(BaseModel):
 
     inference_device: Device = "auto"
     device_index: int | list[int] = 0
-    compute_type: Quantization = "default"  # TODO: should this even be a configuration option?
+    compute_type: Quantization = _DEFAULT_COMPUTE_TYPE
     cpu_threads: int = 0
-    num_workers: int = 1
+    num_workers: int = 3
+    flash_attention: bool = False
+    max_queued_batches: int = 0
+    tensor_parallel: bool = False
+    batch_size: int = Field(default=4, ge=1)
+    """
+    Number of audio segments to decode in a single GPU forward pass.
+    Lower values use less VRAM but are slower. On CUDA OOM, the system
+    automatically retries with batch_size=1.
+    """
+    max_concurrency: int = Field(default=1, ge=1)
+    """
+    Maximum number of concurrent Whisper inference requests.
+    A value of 1 prevents CUDA OOM errors from concurrent GPU usage.
+    Increase only if GPU VRAM is sufficient for parallel inference.
+    """
 
 
 class OrtOptions(BaseModel):
@@ -30,10 +62,30 @@ class OrtOptions(BaseModel):
     """
     Dictionary of ORT providers and their priority. The higher the value, the higher the priority. Default priority for a provider if not specified is 0.
     """
-    provider_opts: dict[str, dict[str, Any]] = {}
+    provider_opts: dict[str, dict[str, Any]] = {
+        "CUDAExecutionProvider": {
+            "arena_extend_strategy": "kSameAsRequested",
+            "cudnn_conv_use_max_workspace": "0",
+            "cudnn_conv_algo_search": "HEURISTIC",
+        },
+    }
     """
     Dictionary of ORT provider options. The keys are provider names, and the values are dictionaries of options.
     Example: {"CUDAExecutionProvider": {"cudnn_conv_algo_search": "DEFAULT"}}
+    """
+    gpu_mem_limit: int | None = None
+    """
+    GPU memory limit in bytes for ONNX Runtime's CUDA execution provider arena.
+    Populated from Config.gpu_mem_limit at startup. None means no limit.
+    """
+    enable_cpu_mem_arena: bool = False
+    """
+    Whether to enable the CPU memory arena in ONNX Runtime sessions.
+    Disabling reduces peak CPU memory usage.
+    """
+    enable_mem_pattern: bool = True
+    """
+    Whether to enable memory pattern optimization in ONNX Runtime sessions.
     """
 
 
@@ -48,14 +100,14 @@ class Config(BaseSettings):
 
     model_config = SettingsConfigDict(env_nested_delimiter="__")
 
-    stt_model_ttl: int = Field(default=300, ge=-1)
+    stt_model_ttl: int = Field(default=-1, ge=-1)
     """
     Time in seconds until a speech to text (stt) model is unloaded after last usage.
     -1: Never unload the model.
     0: Unload the model immediately after usage.
     """
 
-    tts_model_ttl: int = Field(default=300, ge=-1)
+    tts_model_ttl: int = Field(default=-1, ge=-1)
     """
     Time in seconds until a text to speech (tts) model is unloaded after last usage.
     -1: Never unload the model.
@@ -67,6 +119,12 @@ class Config(BaseSettings):
     Time in seconds until a voice activation detection (VAD) model is unloaded after last usage.
     -1: Never unload the model.
     0: Unload the model immediately after usage.
+    """
+
+    vad_model: str = "silero_vad_v6"
+    """
+    Which Silero VAD model to use. Options: 'silero_vad_v5', 'silero_vad_v6'.
+    Only the selected model is loaded on startup.
     """
 
     api_key: SecretStr | None = None
@@ -92,7 +150,7 @@ class Config(BaseSettings):
         `export ALLOW_ORIGINS='["*"]'`
     """
 
-    enable_ui: bool = True
+    enable_ui: bool = False
     """
     Whether to enable the Gradio UI. You may want to disable this if you want to minimize the dependencies and slightly improve the startup time.
     """
@@ -136,10 +194,58 @@ class Config(BaseSettings):
     Shadows OTEL_SERVICE_NAME environment variable.
     """
 
+    inspect_session_dir: str = "~/.cache/speaches/sessions"
+    inspect_retention_count: int = 200
+    inspect_retention_bytes: int = 500_000_000
+    inspect_retention_days: int = 30
+
     preload_models: list[str] = []
     """
     List of model IDs to download during application startup.
     Models will be downloaded sequentially if they do not already exist locally.
     Application will exit if any model fails to download or is not found in the registry.
     Example: ["Systran/faster-whisper-tiny", "rhasspy/piper-voices"]
+    """
+
+    gpu_mem_limit: int = DEFAULT_GPU_MEM_LIMIT
+    """
+    GPU memory limit in bytes shared across inference backends (512MB default).
+    Controls both ONNX Runtime CUDA arena size and CTranslate2 caching allocator limit.
+    Set via GPU_MEM_LIMIT environment variable.
+    """
+
+    default_realtime_stt_model: str = "Systran/faster-distil-whisper-small.en"
+    """
+    Default speech-to-text model used for the realtime WebSocket/WebRTC API
+    when no explicit transcription_model is provided by the client.
+    Set via DEFAULT_REALTIME_STT_MODEL environment variable.
+    """
+
+    qwen3_tts_default_voice: str = "Ryan"
+    """
+    Default preset speaker for the Qwen3-TTS CustomVoice variants when the
+    client passes an unsupported voice name (e.g. an OpenAI voice like
+    'alloy'). Must be one of the 9 presets: Vivian, Serena, Uncle_Fu, Dylan,
+    Eric, Ryan, Aiden, Ono_Anna, Sohee. Set via QWEN3_TTS_DEFAULT_VOICE.
+    """
+
+    qwen3_tts_default_design_instruct: str = "warm, neutral, natural speaking voice"
+    """
+    Default natural-language voice description for the Qwen3-TTS VoiceDesign
+    variant when the client does not provide one. Set via
+    QWEN3_TTS_DEFAULT_DESIGN_INSTRUCT environment variable.
+    """
+
+    qwen3_tts_load_in_8bit: bool = False
+    """
+    Whether to load Qwen3-TTS model weights with bitsandbytes int8 quantization
+    to halve VRAM. Requires the bitsandbytes package. Set via
+    QWEN3_TTS_LOAD_IN_8BIT environment variable.
+    """
+
+    warmup_all_local_models: bool = True
+    """
+    Whether to automatically load all locally cached models into memory at startup.
+    When False, only models listed in preload_models are loaded on startup.
+    Other models are loaded on first request.
     """
