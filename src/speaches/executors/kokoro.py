@@ -1,11 +1,13 @@
 from collections.abc import Generator
 import logging
 from pathlib import Path
+import re
 import time
 from typing import Literal
 
 import huggingface_hub
 from kokoro_onnx import Kokoro
+import numpy as np
 from onnxruntime import InferenceSession
 from pydantic import BaseModel, computed_field
 
@@ -15,25 +17,75 @@ from speaches.api_types import (
 )
 from speaches.audio import Audio
 from speaches.config import OrtOptions
-from speaches.executors.shared.base_model_manager import BaseModelManager, get_ort_providers_with_options
+from speaches.executors.shared.base_model_manager import (
+    BaseModelManager,
+    build_session_options,
+    get_ort_providers_with_options,
+)
 from speaches.executors.shared.handler_protocol import SpeechRequest, SpeechResponse
 from speaches.hf_utils import (
     HfModelFilter,
-    extract_language_list,
     get_cached_model_repos_info,
-    get_model_card_data_from_cached_repo_info,
     list_model_files,
 )
 from speaches.model_registry import (
     ModelRegistry,
 )
 from speaches.tracing import traced_generator
-from speaches.utils import async_to_sync_generator
+from speaches.utils import CudaOutOfMemoryError
 
 SAMPLE_RATE = 24000  # the default sample rate for Kokoro
-LIBRARY_NAME = "onnx"
+MAX_CHUNK_CHARS = 400  # conservative limit to stay well under 510 phoneme limit
 TASK_NAME_TAG = "text-to-speech"
-TAGS = {"speaches", "kokoro"}
+
+# Explicit set of known ONNX Kokoro model IDs. Using metadata-based discovery
+# (library_name, tags) is fragile because many models lack the expected model card
+# fields. This set is the source of truth for which models this executor supports.
+SUPPORTED_MODELS = {
+    "speaches-ai/Kokoro-82M-v1.0-ONNX",
+    "speaches-ai/Kokoro-82M-v1.0-ONNX-fp16",
+    "speaches-ai/Kokoro-82M-v1.0-ONNX-int8",
+}
+
+
+def normalize_text_for_tts(text: str) -> str:
+    text = re.sub(r"[\r\n]+", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
+def split_text_into_chunks(text: str, max_chars: int = MAX_CHUNK_CHARS) -> list[str]:
+    if len(text) <= max_chars:
+        return [text] if text else []
+
+    chunks: list[str] = []
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+
+    current_chunk = ""
+    for sentence in sentences:
+        if len(sentence) > max_chars:
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+                current_chunk = ""
+            words = sentence.split()
+            for word in words:
+                if len(current_chunk) + len(word) + 1 <= max_chars:
+                    current_chunk = f"{current_chunk} {word}" if current_chunk else word
+                else:
+                    if current_chunk:
+                        chunks.append(current_chunk.strip())
+                    current_chunk = word
+        elif len(current_chunk) + len(sentence) + 1 <= max_chars:
+            current_chunk = f"{current_chunk} {sentence}" if current_chunk else sentence
+        else:
+            if current_chunk:
+                chunks.append(current_chunk.strip())
+            current_chunk = sentence
+
+    if current_chunk:
+        chunks.append(current_chunk.strip())
+
+    return chunks
 
 
 class KokoroModelFiles(BaseModel):
@@ -124,43 +176,63 @@ class KokoroModel(Model):
     voices: list[KokoroModelVoice]
 
 
-hf_model_filter = HfModelFilter(
-    library_name=LIBRARY_NAME,
-    task=TASK_NAME_TAG,
-    tags=TAGS,
-)
+# Dummy filter — not used for matching, only satisfies the Executor type.
+# Actual model matching is done via SUPPORTED_MODELS in list_local_models() / list_remote_models().
+hf_model_filter = HfModelFilter(task=TASK_NAME_TAG)
 
 
 logger = logging.getLogger(__name__)
 
 
+def _is_ort_cuda_oom(exc: BaseException) -> bool:
+    msg = str(exc).lower()
+    return ("smaller than requested bytes" in msg and "available memory" in msg) or (
+        "out of memory" in msg and "cuda" in msg
+    )
+
+
+def _kokoro_create_stream(
+    tts: Kokoro,
+    text: str,
+    voice: str,
+    lang: str,
+    speed: float,
+) -> Generator[tuple[np.ndarray, int]]:
+    from kokoro_onnx.trim import trim as trim_audio
+
+    voice_style = tts.get_voice_style(voice)
+    phonemes = tts.tokenizer.phonemize(text, lang)
+    batched_phonemes = tts._split_phonemes(phonemes)  # noqa: SLF001
+
+    for batch in batched_phonemes:
+        audio_part, sample_rate = tts._create_audio(batch, voice_style, speed)  # noqa: SLF001
+        audio_part, _ = trim_audio(audio_part)
+        yield audio_part, sample_rate
+
+
 class KokoroModelRegistry(ModelRegistry):
     def list_remote_models(self) -> Generator[KokoroModel]:
-        models = huggingface_hub.list_models(**self.hf_model_filter.list_model_kwargs(), cardData=True)
-        for model in models:
-            assert model.created_at is not None and model.card_data is not None, model
+        for model_id in SUPPORTED_MODELS:
             yield KokoroModel(
-                id=model.id,
-                created=int(model.created_at.timestamp()),
-                owned_by=model.id.split("/")[0],
-                language=extract_language_list(model.card_data),
+                id=model_id,
+                created=0,
+                owned_by=model_id.split("/")[0],
+                language=[],
                 task=TASK_NAME_TAG,
                 sample_rate=SAMPLE_RATE,
                 voices=VOICES,
             )
 
     def list_local_models(self) -> Generator[KokoroModel]:
-        cached_model_repos_info = get_cached_model_repos_info()
-        for cached_repo_info in cached_model_repos_info:
-            model_card_data = get_model_card_data_from_cached_repo_info(cached_repo_info)
-            if model_card_data is None:
-                continue
-            if self.hf_model_filter.passes_filter(cached_repo_info.repo_id, model_card_data):
+        cached_repos = get_cached_model_repos_info()
+        cached_ids = {info.repo_id for info in cached_repos}
+        for model_id in SUPPORTED_MODELS:
+            if model_id in cached_ids:
                 yield KokoroModel(
-                    id=cached_repo_info.repo_id,
-                    created=int(cached_repo_info.last_modified),
-                    owned_by=cached_repo_info.repo_id.split("/")[0],
-                    language=extract_language_list(model_card_data),
+                    id=model_id,
+                    created=0,
+                    owned_by=model_id.split("/")[0],
+                    language=[],
                     task=TASK_NAME_TAG,
                     sample_rate=SAMPLE_RATE,
                     voices=VOICES,
@@ -169,8 +241,15 @@ class KokoroModelRegistry(ModelRegistry):
     def get_model_files(self, model_id: str) -> KokoroModelFiles:
         model_files = list(list_model_files(model_id))
 
-        model_file_path = next(file_path for file_path in model_files if file_path.name == "model.onnx")
-        voices_file_path = next(file_path for file_path in model_files if file_path.name == "voices.bin")
+        model_file_path = next((file_path for file_path in model_files if file_path.name == "model.onnx"), None)
+        if model_file_path is None:
+            msg = f"'model.onnx' not found for model '{model_id}'. Available files: {[f.name for f in model_files]}"
+            raise FileNotFoundError(msg)
+
+        voices_file_path = next((file_path for file_path in model_files if file_path.name == "voices.bin"), None)
+        if voices_file_path is None:
+            msg = f"'voices.bin' not found for model '{model_id}'. Available files: {[f.name for f in model_files]}"
+            raise FileNotFoundError(msg)
 
         return KokoroModelFiles(
             model=model_file_path,
@@ -194,7 +273,8 @@ class KokoroModelManager(BaseModelManager[Kokoro]):
     def _load_fn(self, model_id: str) -> Kokoro:
         model_files = kokoro_model_registry.get_model_files(model_id)
         providers = get_ort_providers_with_options(self.ort_opts)
-        inf_sess = InferenceSession(model_files.model, providers=providers)
+        sess_options = build_session_options(self.ort_opts)
+        inf_sess = InferenceSession(model_files.model, providers=providers, sess_options=sess_options)
         return Kokoro.from_session(inf_sess, str(model_files.voices))
 
     @traced_generator()
@@ -216,18 +296,35 @@ class KokoroModelManager(BaseModelManager[Kokoro]):
                 msg = f"Voice '{request.voice}' is not supported. Supported voices: {VOICES}"
                 raise ValueError(msg)
 
+        normalized_text = normalize_text_for_tts(request.text)
+        chunks = split_text_into_chunks(normalized_text)
+
+        if not chunks:
+            return
+
         voice_language = next(v.language for v in VOICES if v.name == request.voice)
         with self.load_model(request.model) as tts:
             start = time.perf_counter()
-            async_stream = tts.create_stream(
-                request.text,
-                request.voice,
-                lang=voice_language,
-                speed=request.speed,
-            )
-            # HACK: converting an async generator to a sync generator
-            sync_stream = async_to_sync_generator(async_stream)
-            for audio_data, _ in sync_stream:
-                yield Audio(audio_data, sample_rate=SAMPLE_RATE)
+            for chunk in chunks:
+                try:
+                    for audio_data, _ in _kokoro_create_stream(
+                        tts,
+                        chunk,
+                        request.voice,
+                        lang=voice_language,
+                        speed=request.speed,
+                    ):
+                        yield Audio(audio_data, sample_rate=SAMPLE_RATE)
+                except Exception as e:
+                    if _is_ort_cuda_oom(e):
+                        logger.exception(f"CUDA OOM during TTS for chunk of {len(chunk)} chars")
+                        raise CudaOutOfMemoryError from e
+                    if isinstance(e, RuntimeError) and "number of lines" in str(e):
+                        logger.warning(f"Phonemizer error for chunk, skipping: {e}")
+                        continue
+                    if isinstance(e, IndexError) and "out of bounds" in str(e):
+                        logger.warning(f"Phoneme limit exceeded for chunk, skipping: {e}")
+                        continue
+                    raise
 
         logger.info(f"Generated audio for {len(request.text)} characters in {time.perf_counter() - start}s")
