@@ -73,6 +73,11 @@ class PyannoteDiarizationModelManager(BaseModelManager["Pipeline"]):
         super().__init__(ttl)
 
     def _load_fn(self, model_id: str) -> "Pipeline":
+        import sys
+
+        if sys.version_info >= (3, 14):
+            msg = "pyannote-audio is not available on Python 3.14+ (pydantic v1 incompatibility in its dependency chain). Use Python 3.12 or 3.13."
+            raise RuntimeError(msg)
         from pyannote.audio import Pipeline
         import torch
 

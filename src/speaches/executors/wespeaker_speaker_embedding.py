@@ -1,16 +1,14 @@
-from collections.abc import Generator
+from __future__ import annotations
+
 import logging
-from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import huggingface_hub
 import numpy as np
 from pydantic import BaseModel
-import torch
 
 from speaches.api_types import Model
 from speaches.executors.shared.base_model_manager import BaseModelManager
-from speaches.executors.shared.handler_protocol import SpeakerEmbeddingRequest, SpeakerEmbeddingResponse
 from speaches.hf_utils import (
     HfModelFilter,
     get_cached_model_repos_info,
@@ -18,6 +16,12 @@ from speaches.hf_utils import (
 )
 from speaches.model_registry import ModelRegistry
 from speaches.tracing import traced
+
+if TYPE_CHECKING:
+    from collections.abc import Generator
+    from pathlib import Path
+
+    from speaches.executors.shared.handler_protocol import SpeakerEmbeddingRequest, SpeakerEmbeddingResponse
 
 AVAILABLE_MODELS = {"pyannote/wespeaker-voxceleb-resnet34-LM"}
 TASK_NAME_TAG = "speaker-embedding"
@@ -74,19 +78,27 @@ class WespeakerSpeakerEmbeddingModelManager(BaseModelManager):
         super().__init__(ttl)
 
     def _load_fn(self, model_id: str) -> Any:  # pyannote.audio.Inference
+        import sys
+
+        if sys.version_info >= (3, 14):
+            msg = "pyannote-audio is not available on Python 3.14+ (pydantic v1 incompatibility in its dependency chain). Use Python 3.12 or 3.13."
+            raise RuntimeError(msg)
         from pyannote.audio import Inference, Model
+        import torch as _torch
 
         logger.info(f"Loading speaker embedding model: {model_id}")
         model = Model.from_pretrained(model_id)
         assert model is not None, f"Failed to load speaker embedding model '{model_id}'"
-        if torch.cuda.is_available():
-            model.to(torch.device("cuda"))
+        if _torch.cuda.is_available():
+            model.to(_torch.device("cuda"))
         return Inference(model, window="whole")
 
     @traced()
     def handle_speaker_embedding_request(self, request: SpeakerEmbeddingRequest, **_kwargs) -> SpeakerEmbeddingResponse:
+        import torch as _torch
+
         with self.load_model(request.model_id) as inference:
-            waveform = torch.from_numpy(request.audio.data).unsqueeze(0).float()
+            waveform = _torch.from_numpy(request.audio.data).unsqueeze(0).float()
             embedding = np.asarray(inference({"waveform": waveform, "sample_rate": request.audio.sample_rate}))
             if embedding.ndim == 2:
                 embedding = embedding.squeeze()

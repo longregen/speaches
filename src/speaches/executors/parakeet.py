@@ -37,11 +37,14 @@ TASK_NAME_TAG = "automatic-speech-recognition"
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
+KNOWN_MODELS: dict[str, list[str]] = {
+    "istupakov/parakeet-tdt-0.6b-v2": ["en"],
+    "istupakov/parakeet-tdt-1.1b-v2": ["en"],
+}
+
 hf_model_filter = HfModelFilter(
     model_name="istupakov/parakeet-tdt",
-    # library_name=LIBRARY_NAME,
     task=TASK_NAME_TAG,
-    # tags=TAGS,
 )
 
 
@@ -67,16 +70,30 @@ class NemoConformerTdtModelRegistry(ModelRegistry[Model, NemoConformerTdtModelFi
 
     def list_local_models(self) -> Generator[Model]:
         cached_model_repos_info = get_cached_model_repos_info()
+        seen_ids: set[str] = set()
         for cached_repo_info in cached_model_repos_info:
             model_card_data = get_model_card_data_from_cached_repo_info(cached_repo_info)
-            if model_card_data is None:
-                continue
-            if self.hf_model_filter.passes_filter(cached_repo_info.repo_id, model_card_data):
+            if model_card_data is not None and self.hf_model_filter.passes_filter(
+                cached_repo_info.repo_id, model_card_data
+            ):
+                seen_ids.add(cached_repo_info.repo_id)
                 yield Model(
                     id=cached_repo_info.repo_id,
                     created=int(cached_repo_info.last_modified),
                     owned_by=cached_repo_info.repo_id.split("/")[0],
-                    language=extract_language_list(model_card_data),
+                    language=extract_language_list(model_card_data) if model_card_data else [],
+                    task=TASK_NAME_TAG,
+                )
+        for cached_repo_info in cached_model_repos_info:
+            if cached_repo_info.repo_id in seen_ids:
+                continue
+            if cached_repo_info.repo_id in KNOWN_MODELS:
+                seen_ids.add(cached_repo_info.repo_id)
+                yield Model(
+                    id=cached_repo_info.repo_id,
+                    created=int(cached_repo_info.last_modified),
+                    owned_by=cached_repo_info.repo_id.split("/")[0],
+                    language=KNOWN_MODELS[cached_repo_info.repo_id],
                     task=TASK_NAME_TAG,
                 )
 
