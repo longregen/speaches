@@ -9,13 +9,15 @@ from speaches.realtime.utils import generate_conversation_id
 from speaches.types.realtime import (
     ConversationItem,
     ConversationItemAddedEvent,
+    ConversationItemContentAudio,
     ConversationItemCreateEvent,
     ConversationItemDeletedEvent,
     ConversationItemDeleteEvent,
     ConversationItemDoneEvent,
+    ConversationItemMessage,
     ConversationItemRetrievedEvent,
+    ConversationItemTruncatedEvent,
     create_invalid_request_error,
-    create_server_error,
 )
 
 if TYPE_CHECKING:
@@ -119,8 +121,51 @@ def handle_conversation_item_retrieve_event(ctx: SessionContext, event: Conversa
 
 @event_router.register("conversation.item.truncate")
 def handle_conversation_item_truncate_event(ctx: SessionContext, event: ConversationItemTruncateEvent) -> None:
+    item_id = event.item_id
+    content_index = event.content_index
+    audio_end_ms = event.audio_end_ms
+
+    if item_id not in ctx.conversation.items:
+        ctx.pubsub.publish_nowait(
+            create_invalid_request_error(
+                message=f"Error truncating item: the item with id '{item_id}' does not exist.",
+                event_id=event.event_id,
+            )
+        )
+        return
+
+    item = ctx.conversation.items[item_id]
+    if not isinstance(item, ConversationItemMessage) or item.role != "assistant":
+        ctx.pubsub.publish_nowait(
+            create_invalid_request_error(
+                message=f"Error truncating item: item '{item_id}' is not an assistant message.",
+                event_id=event.event_id,
+            )
+        )
+        return
+
+    if content_index >= len(item.content):
+        ctx.pubsub.publish_nowait(
+            create_invalid_request_error(
+                message=f"Error truncating item: content_index {content_index} is out of range.",
+                event_id=event.event_id,
+            )
+        )
+        return
+
+    content = item.content[content_index]
+    if isinstance(content, ConversationItemContentAudio) and content.transcript:
+        # Rough character-rate estimate for truncation; no word-level timing available.
+        chars_per_ms = 12.5 / 1000
+        estimated_chars = int(audio_end_ms * chars_per_ms)
+        content.transcript = content.transcript[:estimated_chars]
+
     ctx.pubsub.publish_nowait(
-        create_server_error(f"Handling of the '{event.type}' event is not implemented.", event_id=event.event_id)
+        ConversationItemTruncatedEvent(
+            item_id=item_id,
+            content_index=content_index,
+            audio_end_ms=audio_end_ms,
+        )
     )
 
 
