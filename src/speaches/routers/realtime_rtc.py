@@ -1,8 +1,9 @@
 import asyncio
 import base64
+from collections.abc import Coroutine
 import logging
 import time
-from typing import Annotated
+from typing import Annotated, Any
 
 from aiortc import (
     RTCConfiguration,
@@ -22,13 +23,12 @@ from fastapi import (
     Response,
 )
 import numpy as np
-from openai import AsyncOpenAI
 from pydantic import ValidationError
 
 from speaches.dependencies import (
+    CompletionClientDependency,
     ConfigDependency,
     ExecutorRegistryDependency,
-    TranscriptionClientDependency,
 )
 from speaches.realtime.context import SessionContext
 from speaches.realtime.conversation_event_router import event_router as conversation_event_router
@@ -40,7 +40,7 @@ from speaches.realtime.response_event_router import event_router as response_eve
 from speaches.realtime.rtc.audio_stream_track import AudioStreamTrack
 from speaches.realtime.session import create_session_object_configuration
 from speaches.realtime.session_event_router import event_router as session_event_router
-from speaches.realtime.utils import generate_event_id
+from speaches.realtime.utils import generate_event_id, task_done_callback
 from speaches.routers.realtime_ws import event_listener
 from speaches.types.realtime import (
     SERVER_EVENT_TYPES,
@@ -73,6 +73,19 @@ event_router.include_router(session_event_router)
 # https://stackoverflow.com/questions/77560930/cant-create-audio-frame-with-from-nd-array
 
 rtc_session_tasks: dict[str, set[asyncio.Task[None]]] = {}
+
+
+def _create_tracked_task(
+    session_id: str, coro: Coroutine[Any, Any, None], *, name: str | None = None
+) -> asyncio.Task[None]:
+    task = asyncio.create_task(coro, name=name)
+    task.add_done_callback(task_done_callback)
+    task_set = rtc_session_tasks.get(session_id)
+    if task_set is not None:
+        task_set.add(task)
+        task.add_done_callback(task_set.discard)
+    return task
+
 
 # Maximum size in bytes for each message fragment (just under 1 KiB)
 MAX_FRAGMENT_SIZE = 900
@@ -123,6 +136,9 @@ def send_fragmented_message(channel: RTCDataChannel, message: str, event_id: str
 
 
 async def rtc_datachannel_sender(ctx: SessionContext, channel: RTCDataChannel) -> None:
+    from speaches.inspect import emit as inspect_emit
+    from speaches.types.inspect import DEDICATED_LANE_EVENT_TYPES
+
     logger.info("Sender task started")
     q = ctx.pubsub.subscribe()
 
@@ -132,8 +148,8 @@ async def rtc_datachannel_sender(ctx: SessionContext, channel: RTCDataChannel) -
             if event.type not in SERVER_EVENT_TYPES:
                 continue
             server_event = server_event_type_adapter.validate_python(event)
-            if server_event.type == "response.audio.delta":
-                logger.debug("Skipping response.audio.delta event")
+            if server_event.type == "response.output_audio.delta":
+                logger.debug("Skipping response.output_audio.delta event")
                 continue
 
             # Get JSON representation of the event
@@ -147,6 +163,16 @@ async def rtc_datachannel_sender(ctx: SessionContext, channel: RTCDataChannel) -
             send_fragmented_message(channel, message, event_id)
             logger.info(f"Sent {event.type} event message")
 
+            # Inspector wire lane: only control-plane events (dedicated lanes cover the rest).
+            if event.type not in DEDICATED_LANE_EVENT_TYPES:
+                inspect_emit.emit(
+                    "wire",
+                    "out",
+                    event_type=event.type,
+                    bytes=len(message),
+                    transport="rtc",
+                )
+
     except BaseException:
         logger.exception("Sender task failed")
         ctx.pubsub.subscribers.remove(q)
@@ -154,22 +180,43 @@ async def rtc_datachannel_sender(ctx: SessionContext, channel: RTCDataChannel) -
 
 
 def message_handler(ctx: SessionContext, message: str) -> None:
+    from speaches.inspect import emit as inspect_emit
+    from speaches.types.inspect import DEDICATED_LANE_EVENT_TYPES
+
     logger.info(f"Message received: {message}")
     try:
         event = client_event_type_adapter.validate_json(message)
     except ValidationError as e:
         ctx.pubsub.publish_nowait(create_invalid_request_error(message=str(e)))
         logger.exception(f"Received an invalid client event: {message}")
+        inspect_emit.emit(
+            "wire",
+            "err",
+            event_type="invalid",
+            bytes=len(message),
+            error=str(e),
+            transport="rtc",
+        )
         return
 
     logger.debug(f"Received {event.type} event")
     ctx.pubsub.publish_nowait(event)
+    # Inspector wire lane: only control-plane events (dedicated lanes cover the rest).
+    if event.type not in DEDICATED_LANE_EVENT_TYPES:
+        inspect_emit.emit(
+            "wire",
+            "in",
+            event_type=event.type,
+            bytes=len(message),
+            transport="rtc",
+        )
     # asyncio.create_task(event_router.dispatch(ctx, event))
 
 
 async def audio_receiver(ctx: SessionContext, track: RemoteStreamTrack) -> None:
-    # Initialize buffer to store audio data
-    buffer = np.array([], dtype=np.int16)
+    # Accumulate chunks in a list and concatenate once at drain time to avoid O(n^2) np.append copies
+    chunks: list[np.ndarray] = []
+    buffered_samples = 0
 
     while True:
         frames = await track.recv()
@@ -184,11 +231,13 @@ async def audio_receiver(ctx: SessionContext, track: RemoteStreamTrack) -> None:
 
         # Accumulate audio data
         for frame in frames:
-            arr = frame.to_ndarray()
-            buffer = np.append(buffer, arr.flatten())  # Flatten and append to buffer
+            arr = frame.to_ndarray().flatten()
+            chunks.append(arr)
+            buffered_samples += len(arr)
 
             # When buffer reaches or exceeds target size, emit event
-            if len(buffer) >= MIN_BUFFER_SIZE:
+            if buffered_samples >= MIN_BUFFER_SIZE:
+                buffer = np.concatenate(chunks)
                 # Convert to bytes and emit event
                 audio_bytes = buffer.tobytes()
                 assert len(audio_bytes) == len(buffer) * 2, "Audio sample width is not 2 bytes"
@@ -199,7 +248,8 @@ async def audio_receiver(ctx: SessionContext, track: RemoteStreamTrack) -> None:
                     )
                 )
 
-                buffer = np.array([], dtype=np.int16)
+                chunks.clear()
+                buffered_samples = 0
 
 
 def datachannel_handler(ctx: SessionContext, channel: RTCDataChannel) -> None:
@@ -215,7 +265,7 @@ def datachannel_handler(ctx: SessionContext, channel: RTCDataChannel) -> None:
     logger.info("Sent session.created event message")
 
     # Start the data channel sender task
-    rtc_session_tasks[ctx.session.id].add(asyncio.create_task(rtc_datachannel_sender(ctx, channel)))
+    _create_tracked_task(ctx.session.id, rtc_datachannel_sender(ctx, channel), name="rtc_sender")
 
     # Set up the message handler
     channel.on("message")(lambda message: message_handler(ctx, message))
@@ -241,17 +291,33 @@ def datachannel_handler(ctx: SessionContext, channel: RTCDataChannel) -> None:
         logger.info(f"Data channel buffered amount low: {channel.id} (args={args}, kwargs={kwargs})")
 
 
-def iceconnectionstatechange_handler(_ctx: SessionContext, pc: RTCPeerConnection) -> None:
+def iceconnectionstatechange_handler(ctx: SessionContext, pc: RTCPeerConnection) -> None:
     logger.info(f"ICE connection state changed to {pc.iceConnectionState}")
     if pc.iceConnectionState in ["failed", "closed"]:
         logger.info("Peer connection closed")
+        # NOTE (unverified hypothesis): a task registered between this pop and
+        # iteration would not be cancelled here. In practice the ICE state change
+        # marks the connection dead so no new tasks should spawn, but a lock would
+        # close the race definitively. Not a reproduced bug.
+        tasks = rtc_session_tasks.pop(ctx.session.id, set())
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        if ctx.inspector is not None:
+            ctx.inspector.close()
+        if ctx.audio_store is not None:
+            ctx.audio_store.close()
+        from speaches.inspect import registry as _inspect_registry
+
+        _inspect_registry.unregister(ctx.session.id)
+        logger.info(f"Cleaned up {len(tasks)} tasks for session {ctx.session.id}")
 
 
 def track_handler(ctx: SessionContext, track: RemoteStreamTrack) -> None:
     logger.info(f"Track received: kind={track.kind}")
     if track.kind == "audio":
         # Start a task to log audio data
-        rtc_session_tasks[ctx.session.id].add(asyncio.create_task(audio_receiver(ctx, track)))
+        _create_tracked_task(ctx.session.id, audio_receiver(ctx, track), name="rtc_audio_receiver")
     track.on("ended")(lambda: logger.info(f"Track ended: kind={track.kind}"))
 
 
@@ -260,20 +326,30 @@ async def realtime_webrtc(
     request: Request,
     model: Annotated[str, Query(...)],
     config: ConfigDependency,
-    transcription_client: TranscriptionClientDependency,
+    completion_client: CompletionClientDependency,
     executor_registry: ExecutorRegistryDependency,
 ) -> Response:
-    completion_client = AsyncOpenAI(
-        base_url=f"http://{config.host}:{config.port}/v1",
-        api_key=config.api_key.get_secret_value() if config.api_key else "cant-be-empty",
-        max_retries=0,
-    ).chat.completions
     ctx = SessionContext(
-        transcription_client=transcription_client,
+        executor_registry=executor_registry,
         completion_client=completion_client,
         vad_model_manager=executor_registry.vad.model_manager,
-        session=create_session_object_configuration(model, "conversation", None, None),
+        vad_model_id=executor_registry.vad_model_id,
+        session=create_session_object_configuration(
+            model, "conversation", None, None, config.default_realtime_stt_model
+        ),
     )
+    from pathlib import Path as _Path  # local import to keep top of file narrow
+
+    from speaches.inspect import registry as _inspect_registry
+    from speaches.inspect.audio_store import AudioStore as _AudioStore
+    from speaches.inspect.emit import session_id_ctx as _sid_ctx
+    from speaches.inspect.relay import InspectorRelay as _InspectorRelay
+
+    _sid_ctx.set(ctx.session.id)
+    _sd = _Path(config.inspect_session_dir).expanduser()  # noqa: ASYNC240
+    ctx.inspector = _InspectorRelay(ctx.session.id, _sd)
+    ctx.audio_store = _AudioStore(ctx.session.id, _sd)
+    _inspect_registry.register(ctx, ctx.inspector)
     rtc_session_tasks[ctx.session.id] = set()
 
     # TODO: handle both application/sdp and application/json
@@ -333,6 +409,6 @@ async def realtime_webrtc(
     await pc.setLocalDescription(RTCSessionDescription(sdp=str(answer_session_description), type="answer"))
     logger.info(f"Setting local description took {time.perf_counter() - start:.3f} seconds")
 
-    rtc_session_tasks[ctx.session.id].add(asyncio.create_task(event_listener(ctx)))
+    _create_tracked_task(ctx.session.id, event_listener(ctx), name="rtc_event_listener")
 
     return Response(content=pc.localDescription.sdp, media_type="text/plain charset=utf-8")
