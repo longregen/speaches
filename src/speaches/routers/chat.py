@@ -3,6 +3,7 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from io import BytesIO
 import logging
+import threading
 import time
 from typing import Annotated, Self
 from uuid import uuid4
@@ -53,6 +54,7 @@ AUDIO_TRANSCRIPTION_TTL_SECONDS = 60 * 60
 logger = logging.getLogger(__name__)
 router = APIRouter(tags=["voice-chat"])
 cache: TTLCache[str, str] = TTLCache(maxsize=AUDIO_TRANSCRIPTION_CACHE_SIZE, ttl=AUDIO_TRANSCRIPTION_TTL_SECONDS)
+_cache_lock: threading.Lock = threading.Lock()
 
 
 # NOTE: OpenAI doesn't use UUIDs
@@ -112,7 +114,8 @@ async def transform_choice(speech_client: AsyncSpeech, choice: Choice, body: Com
     )
     audio_bytes = res.read()
     audio_id = generate_audio_id()
-    cache[audio_id] = choice.message.content
+    with _cache_lock:
+        cache[audio_id] = choice.message.content
     choice.message.audio = ChatCompletionAudio(
         id=audio_id,
         data=base64.b64encode(audio_bytes).decode("utf-8"),
@@ -151,8 +154,8 @@ class AudioChatStream:
             self.chat_completion_id = chunk.id
             self.created = chunk.created
             choice = chunk.choices[0]
-            assert self.body.modalities is not None
-            if "audio" not in self.body.modalities:  # do not transform the choice if audio is not in the modalities
+            if not self.body.modalities or "audio" not in self.body.modalities:
+                # no transform if audio not requested (or modalities absent entirely, e.g. realtime loopback)
                 yield chunk
                 continue
             if choice.delta.content is not None:
@@ -172,10 +175,7 @@ class AudioChatStream:
         start = time.perf_counter()
         # TODO: parallelize
         async for sentence in self.sentence_chunker:
-            sentence_clean = sentence.strip()
-            sentence_clean = text_utils.strip_markdown_emphasis(sentence_clean)
-            sentence_clean = text_utils.strip_emojis(sentence_clean)
-            sentence_clean = sentence_clean.strip()
+            sentence_clean = text_utils.clean_for_tts(sentence)
             if len(sentence_clean) == 0:
                 logger.warning(f"Skipping empty sentence. ORIGINAL: {sentence}")
                 continue  # skip empty sentences
@@ -204,9 +204,7 @@ class AudioChatStream:
         logger.info(f"Audio generation took {time.perf_counter() - start:.2f} seconds")
 
     async def __aiter__(self) -> AsyncGenerator[ChatCompletionChunk]:
-        assert self.body.modalities is not None
-
-        if "audio" in self.body.modalities:
+        if self.body.modalities and "audio" in self.body.modalities:
             merged_stream = aiostream.stream.merge(
                 self.text_chat_completion_chunk_stream(), self.audio_chat_completion_chunk_stream()
             )
@@ -257,7 +255,8 @@ async def handle_completions(
                     logger.info(f"Transcript for message {i} content part {j}: {transcript}")
 
         elif message.role == "assistant" and message.audio is not None:
-            transcript = cache[message.audio.id]
+            with _cache_lock:
+                transcript = cache[message.audio.id]
             body.messages[i] = ChatCompletionAssistantMessageParam(
                 role="assistant",
                 content=transcript,
