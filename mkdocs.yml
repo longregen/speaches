@@ -52,6 +52,8 @@ nav:
       - Open WebUI Integration: usage/open-webui-integration.md
   - Configuration: configuration.md
   - API: api.md
+  - Development:
+      - Realtime Inspector: realtime-inspector.md
 markdown_extensions:
   - admonition
   - pymdownx.details
