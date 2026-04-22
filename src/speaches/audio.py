@@ -1,5 +1,6 @@
 import base64
 from collections.abc import Generator
+from functools import lru_cache
 import io
 import logging
 import queue as queue_module
@@ -13,13 +14,23 @@ import soundfile as sf
 logger = logging.getLogger(__name__)
 
 
+@lru_cache(maxsize=16)
+def _resample_coords(
+    input_length: int, sample_rate: int, target_sample_rate: int
+) -> tuple[np.typing.NDArray[np.float64], np.typing.NDArray[np.float64]]:
+    ratio = target_sample_rate / sample_rate
+    target_length = int(input_length * ratio)
+    xp = np.arange(input_length, dtype=np.float64)
+    x = np.linspace(0, input_length, target_length, dtype=np.float64)
+    return x, xp
+
+
 # NOTE: `signal.resample_poly` **might** be a better option for resampling audio data
 def resample_audio_data(
     data: np.typing.NDArray[np.float32], sample_rate: int, target_sample_rate: int
 ) -> np.typing.NDArray[np.float32]:
-    ratio = target_sample_rate / sample_rate
-    target_length = int(len(data) * ratio)
-    return np.interp(np.linspace(0, len(data), target_length), np.arange(len(data)), data).astype(np.float32)
+    x, xp = _resample_coords(len(data), sample_rate, target_sample_rate)
+    return np.interp(x, xp, data).astype(np.float32, copy=False)
 
 
 # aip 'Write a function `resample_audio` which would take in RAW PCM 16-bit signed, little-endian audio data represented as bytes (`audio_bytes`) and resample it (either downsample or upsample) from `sample_rate` to `target_sample_rate` using numpy'
@@ -42,9 +53,9 @@ def convert_audio_format(
     subtype: str = "PCM_16",
     endian: str = "LITTLE",
 ) -> bytes:
-    # NOTE: the default dtype is float64. Should something else be used? Would that improve performance?
     data, _ = sf.read(
         io.BytesIO(audio_bytes),
+        dtype="float32",
         samplerate=sample_rate,
         format=input_audio_format,
         channels=channels,
@@ -79,24 +90,34 @@ class Audio:
         sample_rate: int,
         name: str | None = None,
     ) -> None:
-        self.data = data
+        self._buffer: np.typing.NDArray[np.float32] = data
+        self._size: int = len(data)
         self.sample_rate = sample_rate
         self.name = name
 
+    @property
+    def data(self) -> np.typing.NDArray[np.float32]:
+        return self._buffer[: self._size]
+
+    @data.setter
+    def data(self, value: np.typing.NDArray[np.float32]) -> None:
+        self._buffer = value
+        self._size = len(value)
+
     def __repr__(self) -> str:
-        return f"Audio(duration={self.duration:.2f}s, sample_rate={self.sample_rate}Hz, samples={len(self.data)})"
+        return f"Audio(duration={self.duration:.2f}s, sample_rate={self.sample_rate}Hz, samples={self._size})"
 
     @property
     def duration(self) -> float:
-        return len(self.data) / self.sample_rate
+        return self._size / self.sample_rate
 
     @property
     def size_in_bits(self) -> int:
-        return self.data.nbytes * 8
+        return self._size * self._buffer.itemsize * 8
 
     @property
     def size_in_bytes(self) -> int:
-        return self.data.nbytes
+        return self._size * self._buffer.itemsize
 
     @property
     def size_in_kb(self) -> float:
@@ -106,22 +127,26 @@ class Audio:
     def size_in_mb(self) -> float:
         return self.size_in_bytes / (1024.0 * 1024.0)
 
-    def extend(self, data: np.typing.NDArray[np.float32]) -> None:
-        self.data = np.append(self.data, data)
+    def extend(self, chunk: np.typing.NDArray[np.float32]) -> None:
+        chunk_len = len(chunk)
+        required = self._size + chunk_len
+        if required > len(self._buffer):
+            new_capacity = max(required, len(self._buffer) * 2)
+            new_buffer = np.empty(new_capacity, dtype=np.float32)
+            new_buffer[: self._size] = self._buffer[: self._size]
+            self._buffer = new_buffer
+        self._buffer[self._size : required] = chunk
+        self._size = required
 
     def as_bytes(self) -> bytes:
-        # NOTE: a more correct approach would be to normalize the audio data first but I'd rather avoid doing that to not introduce any performance overhead given that I expect the data to already be in the [-1.0, 1.0] range
-        # Clip to [-1.0, 1.0] to avoid overflow
-        # audio = np.clip(self.data, -1.0, 1.0)
-
-        # Scale to int16 range and convert
-        audio = (self.data * 32767).astype(np.int16)
-
-        return audio.tobytes()
+        out = np.empty(len(self.data), dtype=np.int16)
+        np.multiply(self.data, 32767, out=out, casting="unsafe")
+        return out.tobytes()
 
     def to_base64(self) -> str:
-        audio_bytes = self.as_bytes()
-        return base64.b64encode(audio_bytes).decode("utf-8")
+        out = np.empty(len(self.data), dtype=np.int16)
+        np.multiply(self.data, 32767, out=out, casting="unsafe")
+        return base64.b64encode(out).decode("utf-8")
 
     def resample(self, target_sample_rate: int) -> Self:
         if self.sample_rate == target_sample_rate:
