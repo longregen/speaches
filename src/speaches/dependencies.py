@@ -1,12 +1,15 @@
 from functools import lru_cache
+import io
 import logging
 from pathlib import Path
+import subprocess
 import time
 from typing import Annotated, cast
 
 import av.error
 from fastapi import (
     Depends,
+    FastAPI,
     Form,
     HTTPException,
     UploadFile,
@@ -81,27 +84,76 @@ async def verify_api_key(
 ApiKeyDependency = Depends(verify_api_key)
 
 
+def _decode_audio_ffmpeg_fallback(audio_bytes: bytes, sampling_rate: int = 16000) -> "np.typing.NDArray[float32]":
+    result = subprocess.run(
+        [  # noqa: S607
+            "ffmpeg",
+            "-i",
+            "pipe:0",
+            "-f",
+            "s16le",
+            "-ac",
+            "1",
+            "-ar",
+            str(sampling_rate),
+            "pipe:1",
+            "-hide_banner",
+            "-loglevel",
+            "error",
+        ],
+        input=audio_bytes,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        stderr = result.stderr.decode(errors="replace").strip()
+        raise RuntimeError(f"ffmpeg fallback failed (rc={result.returncode}): {stderr}")
+    audio_int16 = np.frombuffer(result.stdout, dtype=np.int16)
+    return cast("np.typing.NDArray[float32]", audio_int16.astype(np.float32) / 32768.0)
+
+
 # TODO: test async vs sync performance
 def audio_file_dependency(
     file: Annotated[UploadFile, Form()],
 ) -> Audio:
     try:
+        raw_bytes = file.file.read()
+        if len(raw_bytes) == 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Failed to decode audio. The provided file is empty.",
+            )
+        magic = raw_bytes[:16].hex() if len(raw_bytes) >= 16 else raw_bytes.hex()
         logger.debug(
-            f"Decoding audio file: {file.filename}, content_type: {file.content_type}, header: {file.headers}, size: {file.size}"
+            f"Decoding audio file: {file.filename}, content_type: {file.content_type}, "
+            f"size: {len(raw_bytes)} bytes, magic: {magic}"
         )
         start = time.perf_counter()
 
         if file.content_type in ("audio/pcm", "audio/raw"):
             logger.debug(f"Detected {file.content_type}, parsing as s16le monochannel")
-            raw_bytes = file.file.read()
             audio_int16 = np.frombuffer(raw_bytes, dtype=np.int16)
             audio_data = cast("np.typing.NDArray[float32]", audio_int16.astype(np.float32) / 32768.0)
         else:
-            audio_data = cast("np.typing.NDArray[float32]", decode_audio(file.file, sampling_rate=16000))
+            try:
+                audio_data = cast(
+                    "np.typing.NDArray[float32]",
+                    decode_audio(io.BytesIO(raw_bytes), sampling_rate=16000),
+                )
+            except (av.error.InvalidDataError, av.error.ValueError) as pyav_err:
+                logger.warning(
+                    f"PyAV failed to decode audio (filename={file.filename}, content_type={file.content_type}, "
+                    f"size={len(raw_bytes)}, magic={magic}): {pyav_err}. Trying ffmpeg fallback."
+                )
+                audio_data = _decode_audio_ffmpeg_fallback(raw_bytes, sampling_rate=16000)
+
         elapsed = time.perf_counter() - start
         audio = Audio(audio_data, sample_rate=16000, name=Path(file.filename).stem if file.filename else None)
-        logger.debug(f"Decoded {audio.duration}s of audio in {elapsed:.5f}s (RTF: {elapsed / audio.duration})")
+        rtf = elapsed / audio.duration if audio.duration > 0 else float("inf")
+        logger.debug(f"Decoded {audio.duration}s of audio in {elapsed:.5f}s (RTF: {rtf})")
         return audio
+    except HTTPException:
+        raise
     except av.error.InvalidDataError as e:
         raise HTTPException(
             status_code=415,
@@ -110,9 +162,21 @@ def audio_file_dependency(
     except av.error.ValueError as e:
         raise HTTPException(
             status_code=400,
-            # TODO: list supported file types
             detail="Failed to decode audio. The provided file is likely empty.",
         ) from e
+    except RuntimeError as e:
+        if "ffmpeg fallback failed" in str(e):
+            logger.exception(
+                f"Both PyAV and ffmpeg fallback failed for file: {file.filename}, content_type: {file.content_type}"
+            )
+            raise HTTPException(
+                status_code=415,
+                detail="Failed to decode audio. The provided file type is not supported.",
+            ) from e
+        logger.exception(
+            "Failed to decode audio. This is likely a bug. Please create an issue at https://github.com/speaches-ai/speaches/issues/new."
+        )
+        raise HTTPException(status_code=500, detail="Failed to decode audio.") from e
     except Exception as e:
         logger.exception(
             "Failed to decode audio. This is likely a bug. Please create an issue at https://github.com/speaches-ai/speaches/issues/new."
@@ -150,8 +214,10 @@ def get_speech_client() -> AsyncSpeech:
             router as speech_router,
         )
 
+        speech_app = FastAPI()
+        speech_app.include_router(speech_router)
         http_client = AsyncClient(
-            transport=ASGITransport(speech_router),
+            transport=ASGITransport(speech_app),
             base_url="http://test/v1",
         )  # NOTE: "test" can be replaced with any other value
     else:
@@ -183,8 +249,10 @@ def get_transcription_client() -> AsyncTranscriptions:
             router as stt_router,
         )
 
+        stt_app = FastAPI()
+        stt_app.include_router(stt_router)
         http_client = AsyncClient(
-            transport=ASGITransport(stt_router),
+            transport=ASGITransport(stt_app),
             base_url="http://test/v1",
         )  # NOTE: "test" can be replaced with any other value
     else:
