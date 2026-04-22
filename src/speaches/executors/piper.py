@@ -8,14 +8,24 @@ from typing import Literal
 import huggingface_hub
 from onnxruntime import InferenceSession
 from opentelemetry import trace
-from piper.config import PiperConfig, SynthesisConfig
-from piper.voice import PiperVoice
 from pydantic import BaseModel, computed_field
+
+try:
+    from piper.config import PiperConfig, SynthesisConfig
+    from piper.voice import PiperVoice
+
+    PIPER_AVAILABLE = True
+except ImportError:
+    PIPER_AVAILABLE = False
 
 from speaches.api_types import Model
 from speaches.audio import Audio
 from speaches.config import OrtOptions
-from speaches.executors.shared.base_model_manager import BaseModelManager, get_ort_providers_with_options
+from speaches.executors.shared.base_model_manager import (
+    BaseModelManager,
+    build_session_options,
+    get_ort_providers_with_options,
+)
 from speaches.executors.shared.handler_protocol import SpeechRequest, SpeechResponse
 from speaches.hf_utils import (
     HfModelFilter,
@@ -60,6 +70,13 @@ class PiperModel(Model):
     sample_rate: int
     voices: list[PiperModelVoice]
 
+
+# Known piper models — fallback if model card metadata is missing/broken.
+KNOWN_MODELS: dict[str, tuple[str, str, int]] = {
+    # model_id: (voice_name, language, sample_rate)
+    "speaches-ai/piper-en_US-hfc_female-medium": ("hfc_female", "en", 22050),
+    "speaches-ai/piper-en_US-hfc_male-medium": ("hfc_male", "en", 22050),
+}
 
 hf_model_filter = HfModelFilter(
     library_name=LIBRARY_NAME,
@@ -124,6 +141,7 @@ class PiperModelRegistry(ModelRegistry):
 
     def list_local_models(self) -> Generator[PiperModel]:
         cached_model_repos_info = get_cached_model_repos_info()
+        seen_ids: set[str] = set()
         for cached_repo_info in cached_model_repos_info:
             model_card_data = get_model_card_data_from_cached_repo_info(cached_repo_info)
             if model_card_data is None:
@@ -137,6 +155,7 @@ class PiperModelRegistry(ModelRegistry):
                 sample_rate = PIPER_VOICE_QUALITY_SAMPLE_RATE_MAP[quality]
                 languages = extract_language_list(model_card_data)
                 assert len(languages) == 1, model_card_data
+                seen_ids.add(cached_repo_info.repo_id)
                 yield PiperModel(
                     id=cached_repo_info.repo_id,
                     created=int(cached_repo_info.last_modified),
@@ -150,6 +169,22 @@ class PiperModelRegistry(ModelRegistry):
                             language=languages[0],
                         )
                     ],
+                )
+        # Fallback: yield known models present in cache but missed by metadata filter
+        for cached_repo_info in cached_model_repos_info:
+            if cached_repo_info.repo_id in seen_ids:
+                continue
+            if cached_repo_info.repo_id in KNOWN_MODELS:
+                voice_name, language, sample_rate = KNOWN_MODELS[cached_repo_info.repo_id]
+                seen_ids.add(cached_repo_info.repo_id)
+                yield PiperModel(
+                    id=cached_repo_info.repo_id,
+                    created=int(cached_repo_info.last_modified),
+                    owned_by=cached_repo_info.repo_id.split("/")[0],
+                    language=[language],
+                    task=TASK_NAME_TAG,
+                    sample_rate=sample_rate,
+                    voices=[PiperModelVoice(name=voice_name, language=language)],
                 )
 
     def get_model_files(self, model_id: str) -> PiperModelFiles:
@@ -170,31 +205,35 @@ class PiperModelRegistry(ModelRegistry):
 
 piper_model_registry = PiperModelRegistry(hf_model_filter=hf_model_filter)
 
+if PIPER_AVAILABLE:
 
-class PiperModelManager(BaseModelManager["PiperVoice"]):
-    def __init__(self, ttl: int, ort_opts: OrtOptions) -> None:
-        super().__init__(ttl)
-        self.ort_opts = ort_opts
+    class PiperModelManager(BaseModelManager["PiperVoice"]):
+        def __init__(self, ttl: int, ort_opts: OrtOptions) -> None:
+            super().__init__(ttl)
+            self.ort_opts = ort_opts
 
-    def _load_fn(self, model_id: str) -> PiperVoice:
-        model_files = piper_model_registry.get_model_files(model_id)
-        providers = get_ort_providers_with_options(self.ort_opts)
-        inf_sess = InferenceSession(model_files.model, providers=providers)
-        conf = PiperConfig.from_dict(json.loads(model_files.config.read_text()))
-        return PiperVoice(session=inf_sess, config=conf)
+        def _load_fn(self, model_id: str) -> PiperVoice:
+            model_files = piper_model_registry.get_model_files(model_id)
+            providers = get_ort_providers_with_options(self.ort_opts)
+            sess_options = build_session_options(self.ort_opts)
+            inf_sess = InferenceSession(model_files.model, providers=providers, sess_options=sess_options)
+            conf = PiperConfig.from_dict(json.loads(model_files.config.read_text()))
+            return PiperVoice(session=inf_sess, config=conf)
 
-    @traced_generator()
-    def handle_speech_request(
-        self,
-        request: SpeechRequest,
-        **_kwargs,
-    ) -> SpeechResponse:
-        if request.speed < 0.25 or request.speed > 4.0:
-            msg = (f"Speed must be between 0.25 and 4.0, got {request.speed}",)
-            raise ValueError(msg)
-        # TODO: maybe check voice
-        with self.load_model(request.model) as piper_tts:
-            start = time.perf_counter()
-            for audio_chunk in piper_tts.synthesize(request.text, SynthesisConfig(length_scale=1.0 / request.speed)):
-                yield Audio(audio_chunk.audio_float_array, sample_rate=piper_tts.config.sample_rate)
-        logger.info(f"Generated audio for {len(request.text)} characters in {time.perf_counter() - start}s")
+        @traced_generator()
+        def handle_speech_request(
+            self,
+            request: SpeechRequest,
+            **_kwargs,
+        ) -> SpeechResponse:
+            if request.speed < 0.25 or request.speed > 4.0:
+                msg = (f"Speed must be between 0.25 and 4.0, got {request.speed}",)
+                raise ValueError(msg)
+            # TODO: maybe check voice
+            with self.load_model(request.model) as piper_tts:
+                start = time.perf_counter()
+                for audio_chunk in piper_tts.synthesize(
+                    request.text, SynthesisConfig(length_scale=1.0 / request.speed)
+                ):
+                    yield Audio(audio_chunk.audio_float_array, sample_rate=piper_tts.config.sample_rate)
+            logger.info(f"Generated audio for {len(request.text)} characters in {time.perf_counter() - start}s")
