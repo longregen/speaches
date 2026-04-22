@@ -1,5 +1,6 @@
 import base64
 from collections.abc import Generator
+from functools import lru_cache
 import io
 import logging
 import queue as queue_module
@@ -13,13 +14,23 @@ import soundfile as sf
 logger = logging.getLogger(__name__)
 
 
+@lru_cache(maxsize=16)
+def _resample_coords(
+    input_length: int, sample_rate: int, target_sample_rate: int
+) -> tuple[np.typing.NDArray[np.float64], np.typing.NDArray[np.float64]]:
+    ratio = target_sample_rate / sample_rate
+    target_length = int(input_length * ratio)
+    xp = np.arange(input_length, dtype=np.float64)
+    x = np.linspace(0, input_length, target_length, dtype=np.float64)
+    return x, xp
+
+
 # NOTE: `signal.resample_poly` **might** be a better option for resampling audio data
 def resample_audio_data(
     data: np.typing.NDArray[np.float32], sample_rate: int, target_sample_rate: int
 ) -> np.typing.NDArray[np.float32]:
-    ratio = target_sample_rate / sample_rate
-    target_length = int(len(data) * ratio)
-    return np.interp(np.linspace(0, len(data), target_length), np.arange(len(data)), data).astype(np.float32)
+    x, xp = _resample_coords(len(data), sample_rate, target_sample_rate)
+    return np.interp(x, xp, data).astype(np.float32, copy=False)
 
 
 # aip 'Write a function `resample_audio` which would take in RAW PCM 16-bit signed, little-endian audio data represented as bytes (`audio_bytes`) and resample it (either downsample or upsample) from `sample_rate` to `target_sample_rate` using numpy'
@@ -42,9 +53,11 @@ def convert_audio_format(
     subtype: str = "PCM_16",
     endian: str = "LITTLE",
 ) -> bytes:
-    # NOTE: the default dtype is float64. Should something else be used? Would that improve performance?
+    # float32 mantissa (24 bits) is lossless for PCM_16 and PCM_24; PCM_32 needs float64.
+    dtype = "float64" if subtype == "PCM_32" else "float32"
     data, _ = sf.read(
         io.BytesIO(audio_bytes),
+        dtype=dtype,
         samplerate=sample_rate,
         format=input_audio_format,
         channels=channels,
