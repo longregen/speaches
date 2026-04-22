@@ -2,7 +2,6 @@ import logging
 
 from openai.types.chat import (
     ChatCompletionAssistantMessageParam,
-    ChatCompletionAudioParam,
     ChatCompletionMessageParam,
     ChatCompletionMessageToolCallParam,
     ChatCompletionStreamOptionsParam,
@@ -25,8 +24,6 @@ logger = logging.getLogger(__name__)
 def create_completion_params(
     model_id: str, messages: list[ChatCompletionMessageParam], response: Response
 ) -> CompletionCreateParamsStreaming:
-    assert response.output_audio_format == "pcm16"  # HACK
-
     max_tokens = None if response.max_response_output_tokens == "inf" else response.max_response_output_tokens
     kwargs = {}
     if len(response.tools) > 0:
@@ -45,30 +42,27 @@ def create_completion_params(
         ]
         kwargs["tool_choice"] = response.tool_choice
 
-    return CompletionCreateParamsStreaming(
+    system_messages: list[ChatCompletionMessageParam] = (
+        [ChatCompletionSystemMessageParam(role="system", content=response.instructions)]
+        if response.instructions
+        else []
+    )
+    params = CompletionCreateParamsStreaming(
         model=model_id,
-        messages=[
-            ChatCompletionSystemMessageParam(
-                role="system",
-                content=response.instructions,
-            ),
-            *messages,
-        ],
+        messages=[*system_messages, *messages],
         stream=True,
-        modalities=response.modalities,
-        audio=ChatCompletionAudioParam(
-            voice=response.voice,  # pyright: ignore[reportArgumentType]
-            format=response.output_audio_format,
-        ),
         temperature=response.temperature,
         max_tokens=max_tokens,
         stream_options=ChatCompletionStreamOptionsParam(include_usage=True),
         **kwargs,
     )
+    params["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}  # ty: ignore[invalid-key]  # pyright: ignore[reportTypedDictUnknownKey]
+    return params
 
 
 def conversation_item_to_chat_message(
     item: ConversationItem,
+    audio_direct_prompt: str | None = None,
 ) -> ChatCompletionMessageParam | None:
     match item.type:
         case "message":
@@ -82,13 +76,20 @@ def conversation_item_to_chat_message(
                 case "text":
                     assert content.text, content
                     return ChatCompletionAssistantMessageParam(role="assistant", content=content.text)
-                case "audio":
+                case "output_audio":
                     assert content.transcript, content
                     return ChatCompletionAssistantMessageParam(role="assistant", content=content.transcript)
                 case "input_text":
                     assert content.text, content
                     return ChatCompletionUserMessageParam(role="user", content=content.text)
                 case "input_audio":
+                    if content.audio:
+                        parts: list = [
+                            {"type": "input_audio", "input_audio": {"data": content.audio, "format": "wav"}},
+                        ]
+                        if audio_direct_prompt:
+                            parts.append({"type": "text", "text": audio_direct_prompt})
+                        return ChatCompletionUserMessageParam(role="user", content=parts)
                     if not content.transcript:
                         logger.error(f"Conversation item doesn't have a non-empty transcript: {item}")
                         return None
@@ -117,9 +118,11 @@ def conversation_item_to_chat_message(
             )
 
 
-def items_to_chat_messages(items: list[ConversationItem]) -> list[ChatCompletionMessageParam]:
+def items_to_chat_messages(
+    items: list[ConversationItem], audio_direct_prompt: str | None = None
+) -> list[ChatCompletionMessageParam]:
     return [
         chat_message
-        for chat_message in (conversation_item_to_chat_message(item) for item in items)
+        for chat_message in (conversation_item_to_chat_message(item, audio_direct_prompt) for item in items)
         if chat_message is not None
     ]
