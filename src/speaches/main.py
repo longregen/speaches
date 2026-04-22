@@ -297,6 +297,25 @@ def create_app() -> FastAPI:
     # WebSocket router WITHOUT authentication (handles its own)
     app.include_router(realtime_ws_router)
 
+    # Inspector — HTTP + WebSocket. Auth on HTTP via http_dependencies; WS verifies itself.
+    from pathlib import Path as _Path
+
+    from speaches.inspect.retention import cleanup_on_startup as _inspect_cleanup
+    from speaches.routers.inspect import router as inspect_router
+
+    _session_dir = _Path(config.inspect_session_dir).expanduser()
+    _inspect_cleanup(
+        _session_dir,
+        max_count=config.inspect_retention_count,
+        max_bytes=config.inspect_retention_bytes,
+        max_days=config.inspect_retention_days,
+    )
+    app.include_router(inspect_router, dependencies=http_dependencies)
+    _inspect_static = _Path(__file__).parent / "inspect" / "static"
+    if _inspect_static.is_dir():
+        app.get("/v1/inspect", include_in_schema=False)(lambda: RedirectResponse(url="/v1/inspect/"))
+        app.mount("/v1/inspect", StaticFiles(directory=str(_inspect_static), html=True))
+
     # HACK: move this elsewhere
     app.get("/v1/realtime", include_in_schema=False)(lambda: RedirectResponse(url="/v1/realtime/"))
     app.mount("/v1/realtime", StaticFiles(directory="realtime-console/dist", html=True))
