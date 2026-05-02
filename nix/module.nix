@@ -94,14 +94,12 @@ in
           Group = "speaches";
           WorkingDirectory = cfg.dataDir;
 
-          # Security hardening
           NoNewPrivileges = true;
           PrivateTmp = true;
           ProtectSystem = "strict";
           ProtectHome = true;
           ReadWritePaths = [ cfg.dataDir ];
 
-          # Load environment file if specified
           EnvironmentFile = lib.mkIf (cfg.environmentFile != null) cfg.environmentFile;
         };
 
@@ -110,7 +108,6 @@ in
         '';
       };
 
-      # Create user and group
       users.users.speaches = {
         isSystemUser = true;
         group = "speaches";
@@ -120,7 +117,6 @@ in
 
       users.groups.speaches = { };
 
-      # Open firewall port
       networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
     }
   );

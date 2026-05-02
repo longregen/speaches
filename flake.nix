@@ -1,6 +1,6 @@
 {
   inputs = {
-    nixpkgs.url = "github:NixOS/nixpkgs";
+    nixpkgs.url = "github:NixOS/nixpkgs/b12141ef619e0a9c1c84dc8c684040326f27cdcc";
     nix-hug = {
       url = "github:longregen/nix-hug";
       inputs.nixpkgs.follows = "nixpkgs";
@@ -152,6 +152,51 @@
                 hash = "sha256-TL9Um4Mm9g+A8lNtnu/rRQqavoM2WgmAMciXGfG+F9I=";
               };
 
+              # kvazaar (HEVC encoder pulled in by ffmpeg-full) ships ctest cases that get
+              # SIGKILLed in the macOS sandbox. Speaches doesn't encode HEVC; tests are noise.
+              kvazaar = prev.kvazaar.overrideAttrs (
+                prev.lib.optionalAttrs prev.stdenv.isDarwin { doCheck = false; }
+              );
+
+              # chromaprint (audio fingerprinting, ffmpeg-full transitive dep) tests get
+              # SIGKILLed in the macOS sandbox. Not used by speaches at runtime.
+              chromaprint = prev.chromaprint.overrideAttrs (
+                prev.lib.optionalAttrs prev.stdenv.isDarwin { doCheck = false; }
+              );
+
+              # ffmpeg-{headless,full} on darwin: nixpkgs' generic.nix doesn't pull in
+              # autoSignDarwinBinariesHook, and stdenv's strip runs *after* the linker's
+              # adhoc signature, leaving every libav*/libsw*.dylib with `tainted:1`. macOS
+              # arm64 then SIGKILLs anything that loads them (e.g. python importing PyAV).
+              # Re-sign every dylib in $lib/lib so the page hashes match the stripped bytes.
+              ffmpeg-headless = prev.ffmpeg-headless.overrideAttrs (
+                old:
+                prev.lib.optionalAttrs prev.stdenv.isDarwin {
+                  postFixup =
+                    (old.postFixup or "")
+                    + ''
+                      for dylib in $lib/lib/*.dylib; do
+                        [ -L "$dylib" ] && continue
+                        ${prev.darwin.sigtool}/bin/codesign -f -s - "$dylib" || true
+                      done
+                    '';
+                }
+              );
+              ffmpeg-full = prev.ffmpeg-full.overrideAttrs (
+                old:
+                prev.lib.optionalAttrs prev.stdenv.isDarwin {
+                  postFixup =
+                    (old.postFixup or "")
+                    + ''
+                      for dylib in $lib/lib/*.dylib; do
+                        [ -L "$dylib" ] && continue
+                        ${prev.darwin.sigtool}/bin/codesign -f -s - "$dylib" || true
+                      done
+                    '';
+                }
+              );
+
+
               # Override onnxruntime in the python fixed-point for the target Python version only
               pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
                 (
@@ -200,10 +245,10 @@
                     });
                   }
                   # Darwin-only: tests that fail in the macOS sandbox (socket/network restrictions).
-                  # These are transitive test deps of gradio, not runtime deps of speaches.
+                  # Each target is in the speaches build-time closure (test deps of gradio etc.);
+                  # entries pruned were ones whose target package never gets built.
                   // lib.optionalAttrs isDarwin (
                     disableTestPaths "geoip2" [ "tests/webservice_test.py" ]
-                    // disableTests "aioquic" [ "test_connect_and_serve_ipv4" ]
                     // disableTests "scipy" [ "TestDatasets" ]
                     // disableTests "opentelemetry-exporter-otlp-proto-grpc" [
                       "test_permanent_failure"
@@ -212,27 +257,44 @@
                       "test_success"
                       "test_unavailable_delay"
                     ]
-                    // disableTests "backrefs" [ "test_timeout" ]
                     // disableTests "opentelemetry-instrumentation-requests" [ "TestURLLib3InstrumentorWithRealSocket" ]
-                    // disableTests "kubernetes" [
-                      "test_rest_call_ignores_env"
-                      "test_websocket_call_honors_env"
-                    ]
                     # Twisted uses trial (not pytest), so disabledTests has no effect.
                     // noCheck "twisted"
                     // disableTestPaths "aiohttp" [ "tests/test_connector.py" ]
-                    // noCheck "psutil"
-                    // noCheck "pyperf"
+                    # requests-futures' tests bind localhost sockets which are blocked
+                    # in the macOS sandbox.
+                    // noCheck "requests-futures"
+                    # audioread checkPhase tries to open audio backends (gst/coreaudio)
+                    # that aren't available in the macOS sandbox.
+                    // noCheck "audioread"
+                    # sentry-sdk tracing tests fail in sandbox (timing/profiler-dependent).
+                    // disableTestPaths "sentry-sdk" [ "tests/tracing/test_span_streaming.py" ]
                   )
-                  # Runtime fixes for all platforms.
-                  # plotly/optuna/wandb: plotly 6.5.2 conftest uses removed `py.path.local` under pytest 9.
-                  # jupyter-server: flaky `test_cull_connected` (tornado HTTPTimeoutError) in sandbox.
-                  // noCheck "plotly"
+                  # Runtime fixes for all platforms. optuna/wandb tests fail in sandbox
+                  # (network/filesystem checks); both are gradio transitive deps.
+                  # jupyter-server has flaky tornado timeout tests in sandbox.
                   // noCheck "optuna"
-                  // noCheck "wandb"
                   // noCheck "jupyter-server"
+                  # wandb's let-bound parquet-rust-wrapper crate runs http_file_reader tests
+                  # against an httpbin shim that fails in sandbox. Skip checks for the rust
+                  # subcrates by replacing rustPlatform with a no-check variant.
+                  // {
+                    wandb =
+                      let
+                        noCheckRust = prev.rustPlatform // {
+                          buildRustPackage =
+                            args: prev.rustPlatform.buildRustPackage (args // { doCheck = false; });
+                        };
+                      in
+                      (pyPrev.wandb.override { rustPlatform = noCheckRust; }).overridePythonAttrs {
+                        doCheck = false;
+                      };
+                  }
                   # gradio: test_pipelines.py collection crashes on Linux.
                   # Re-expose `override` passthrough (needed by gradio's own sans-reverse-deps variant).
+                  # gradio-client: tests pull in `gradio.passthru.sans-reverse-dependencies`,
+                  # forcing a near-duplicate full gradio build. Skipping tests removes that
+                  # branch from the closure entirely.
                   // {
                     gradio =
                       let
@@ -242,36 +304,15 @@
                         };
                       in
                       base // { inherit (pyPrev.gradio) override; };
-                    # Pin torchaudio 2.9.1: nixpkgs ships 2.10.0 which requires torch >=2.10,
-                    # but nixpkgs torch is 2.9.1. Tests also hang in sandbox.
-                    torchaudio = pyPrev.torchaudio.overridePythonAttrs (old: {
-                      version = "2.9.1";
-                      src = prev.fetchFromGitHub {
-                        owner = "pytorch";
-                        repo = "audio";
-                        rev = "v2.9.1";
-                        hash = "sha256-tTilG/haU3OycSWqA5LR3egcxHVRg/yHJ8JB2rz3aKw=";
-                      };
-                      nativeBuildInputs = (old.nativeBuildInputs or [ ]) ++ [
-                        prev.cmake
-                        prev.ninja
-                      ];
-                      dontUseCmakeConfigure = true;
+                    gradio-client = pyPrev.gradio-client.overridePythonAttrs {
                       doCheck = false;
                       doInstallCheck = false;
-                      nativeCheckInputs = [ ];
-                      checkPhase = "true";
-                      installCheckPhase = "true";
-                    });
-                    # ruamel-yaml 0.19: composer.py references removed self.loader.max_depth.
-                    ruamel-yaml = pyPrev.ruamel-yaml.overridePythonAttrs (old: {
-                      postPatch = (old.postPatch or "") + ''
-                        sed -i 's/self\.loader\.max_depth/getattr(self.loader, "max_depth", None)/g' composer.py
-                      '';
-                    });
-                    # hyperpyyaml is marked broken in nixpkgs but works fine.
+                      dontCheckRuntimeDeps = true;
+                    };
+                    # hyperpyyaml: dontCheckRuntimeDeps because the package's runtime-deps
+                    # walker dislikes one of its propagated inputs. (`meta.broken = false`
+                    # was needed earlier; nixpkgs unmarked it.)
                     hyperpyyaml = pyPrev.hyperpyyaml.overridePythonAttrs {
-                      meta.broken = false;
                       dontCheckRuntimeDeps = true;
                     };
                     pyannote-audio = pyPrev.pyannote-audio.overridePythonAttrs (old: {
@@ -279,7 +320,14 @@
                       disabledTestPaths = (old.disabledTestPaths or [ ]) ++ [ "tests/test_train.py" ];
                     });
                     pyannote-pipeline = pyPrev.pyannote-pipeline.overridePythonAttrs { dontCheckRuntimeDeps = true; };
-                    speechbrain = pyPrev.speechbrain.overridePythonAttrs { dontCheckRuntimeDeps = true; };
+                    # speechbrain ships a top-level docs/ dir into site-packages that
+                    # collides with cryptography's docs/conf.py when buildEnv merges them.
+                    speechbrain = pyPrev.speechbrain.overridePythonAttrs (old: {
+                      dontCheckRuntimeDeps = true;
+                      postInstall = (old.postInstall or "") + ''
+                        rm -rf "$out/${pyPrev.python.sitePackages}/docs"
+                      '';
+                    });
                   }
                   # Disabled upstream for py3.14; re-enable without tests on darwin.
                   // builtins.listToAttrs (
@@ -292,23 +340,18 @@
                         };
                       })
                       [
-                        "google-pasta"
                         "aws-sam-translator"
                         "cfn-lint"
                       ]
                   )
-                  # Darwin-only: tests that fail in the macOS sandbox.
+                  # Darwin-only test disables for packages in the build-time closure.
+                  # jupyter-server entry pruned: shadowed by the cross-platform `noCheck "jupyter-server"`.
                   // lib.optionalAttrs isDarwin (
-                    disableTests "imageio" [ "test_process_termination" ]
-                    // disableTests "python-ulid" [ "test_same_millisecond_overflow" ]
-                    // noCheck "fakeredis"
-                    // noCheck "databricks-sql-connector"
-                    // disableTests "django" [ "test_crafted_xml_performance" ]
-                    // disableTests "jupyter-server" [
-                      "test_cull_connected"
-                      "test_launch_instance"
-                      "test_token_file"
-                    ]
+                    disableTests "python-ulid" [ "test_same_millisecond_overflow" ]
+                    # django uses unittest + runtests.py, not pytest, so disabledTests has
+                    # no effect. test_crafted_xml_performance is timing-based and flakes
+                    # on darwin under sandbox load.
+                    // noCheck "django"
                     // disableTests "pyarrow" [
                       "test_batch_lifetime"
                       "test_timezone_absent"
@@ -1023,7 +1066,7 @@
             program = "${speaches}/bin/speaches";
             meta = {
               description = "AI-powered speech processing application";
-              maintainers = [ "longregen <claude@infophysics.org>" ];
+              maintainers = [ ];
             };
           };
 

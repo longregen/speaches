@@ -1,15 +1,4 @@
-# Override onnxruntime to build with CoreML Execution Provider on macOS.
-#
-# The upstream nixpkgs onnxruntime only enables CPU EP on darwin.
-# CoreML EP delegates ONNX graph nodes to Apple's CoreML framework,
-# which can use the Neural Engine and GPU for acceleration.
-#
-# Requires:
-#   - macOS 13.3+ (already enforced by nixpkgs' darwinMinVersionHook)
-#   - Build with --impure (Apple frameworks not in nix store)
-#
-# Usage in flake.nix overlay:
-#   (import ./nix/onnxruntime-coreml.nix)
+# Requires --impure: Apple frameworks not in nix store.
 final: prev:
 let
   inherit (prev) lib stdenv fetchFromGitHub;

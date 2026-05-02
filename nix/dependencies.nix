@@ -1,5 +1,3 @@
-# Custom package dependencies for speaches
-# All packages are built from GitHub source (not PyPI wheels).
 {
   pkgs,
   pyPackages,
@@ -102,16 +100,19 @@ rec {
     #    the 25Hz tokenizer path we never hit. Make the sole `import sox` optional so the
     #    25Hz module still loads (its V1Config/V1Model are imported from core/__init__.py
     #    even though we never use them at runtime on 12Hz models).
-    # 4. `check_model_inputs` was moved/removed in transformers >=5.0; upstream qwen_tts
-    #    pins transformers==4.57.3. Replace the import with a no-op decorator fallback
-    #    so qwen_tts loads against the nixpkgs transformers 5.x.
+    # 4. `check_model_inputs` changed shape across transformers versions:
+    #    upstream qwen_tts pins 4.57.3 where it's a decorator factory called as
+    #    `@check_model_inputs()`; in 5.x it's a direct decorator that takes
+    #    `func` (so `check_model_inputs()` raises "missing 1 required positional
+    #    argument: 'func'"). Replace the import with a compat shim that accepts
+    #    both calling conventions and delegates to the real one when present.
     postPatch = ''
       sed -i '/^  "gradio",$/d' pyproject.toml
       sed -i '/^  "sox",$/d' pyproject.toml
       sed -i '/\[project.scripts\]/,/^$/d' pyproject.toml
       sed -i 's|^import sox$|try:\n    import sox\nexcept ImportError:\n    sox = None|' \
         qwen_tts/core/tokenizer_25hz/vq/speech_vq.py
-      sed -i 's|^from transformers.utils.generic import check_model_inputs$|try:\n    from transformers.utils.generic import check_model_inputs\nexcept ImportError:\n    def check_model_inputs(*_a, **_kw):\n        def _d(fn): return fn\n        return _d|' \
+      sed -i 's|^from transformers.utils.generic import check_model_inputs$|try:\n    from transformers.utils.generic import check_model_inputs as _real_check_model_inputs\nexcept ImportError:\n    _real_check_model_inputs = None\ndef check_model_inputs(*args, **kwargs):\n    if args and callable(args[0]) and not kwargs and _real_check_model_inputs is not None:\n        return _real_check_model_inputs(args[0])\n    def _d(fn): return fn\n    return _d|' \
         qwen_tts/core/tokenizer_12hz/modeling_qwen3_tts_tokenizer_v2.py
       # 5. transformers 5.x `PretrainedConfig` no longer auto-provides `pad_token_id`;
       #    qwen_tts expects it as a common kwarg. Fall back to None when absent.
@@ -119,7 +120,7 @@ rec {
         qwen_tts/core/models/modeling_qwen3_tts.py
       # 6. transformers 5.x removed the "default" ROPE_INIT_FUNCTIONS key; register a
       #    compat shim matching the 4.x default RoPE (no scaling).
-      cat > /tmp/qwen_rope_shim.py <<'QSHIM'
+      cat > "$NIX_BUILD_TOP/qwen_rope_shim.py" <<'QSHIM'
 
 # Compat shim for transformers >=5.0 where the 'default' ROPE key was removed.
 def _speaches_default_rope_init(config, device=None, seq_len=None, layer_type=None):
@@ -134,7 +135,7 @@ def _speaches_default_rope_init(config, device=None, seq_len=None, layer_type=No
 if 'default' not in ROPE_INIT_FUNCTIONS:
     ROPE_INIT_FUNCTIONS['default'] = _speaches_default_rope_init
 QSHIM
-      sed -i '/^                                              dynamic_rope_update)$/r /tmp/qwen_rope_shim.py' \
+      sed -i '/^                                              dynamic_rope_update)$/r '"$NIX_BUILD_TOP"'/qwen_rope_shim.py' \
         qwen_tts/core/models/modeling_qwen3_tts.py
       # 7. transformers 5.x added `fix_mistral_regex` as a native tokenizer-backend
       #    param. Passing it via `AutoProcessor.from_pretrained(..., fix_mistral_regex=True)`
@@ -427,7 +428,6 @@ QSHIM
     doCheck = false;
   };
 
-  # onnx-diarization and its dependencies
   inherit (pyPackages) einops;
 
   kaldi_native_fbank =
@@ -519,7 +519,6 @@ QSHIM
     doCheck = false;
   };
 
-  # Piper TTS packages (Linux only)
   # piper-tts v1.3.0+ (from OHF-Voice/piper1-gpl) embeds espeak-ng directly
   # and no longer depends on the old rhasspy/piper-phonemize library.
   piper_phonemize = null;
@@ -633,7 +632,6 @@ QSHIM
     doCheck = false;
   };
 
-  # OpenTelemetry instrumentation packages
   # Pinned to 0.55b0 to match the nixpkgs otel ecosystem version
   opentelemetry_instrumentation_asyncio = pyPackages.buildPythonPackage {
     pname = "opentelemetry-instrumentation-asyncio";
