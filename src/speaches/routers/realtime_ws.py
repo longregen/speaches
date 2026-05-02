@@ -138,13 +138,10 @@ async def realtime(
 
     session = create_session_object_configuration(
         model,
-        intent,
-        language,
-        transcription_model,
-        config.default_realtime_stt_model,
-        config.default_no_speech_prob_threshold,
-        config.default_avg_logprob_threshold,
-        config.default_speech_speed,
+        config=config,
+        intent=intent,
+        language=language,
+        transcription_model=transcription_model,
     )
     if instructions is not None:
         session.instructions = instructions

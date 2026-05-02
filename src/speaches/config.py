@@ -252,6 +252,30 @@ class Config(BaseSettings):
     DEFAULT_AVG_LOGPROB_THRESHOLD environment variable.
     """
 
+    default_vad_threshold: float = Field(default=0.6, ge=0.0, le=1.0)
+    """
+    Default server-side VAD activation probability threshold used to seed
+    `session.turn_detection.threshold` for new realtime sessions. Lower
+    values are more eager to fire speech_started (more barge-ins, more
+    false positives on background noise); higher values delay activation.
+    Clients can override per-session via session.update. Set via
+    DEFAULT_VAD_THRESHOLD environment variable.
+    """
+
+    default_vad_prefix_padding_ms: int = Field(default=300, ge=0)
+    """
+    Default amount of audio prepended to a detected speech segment, in
+    milliseconds. Used to seed `session.turn_detection.prefix_padding_ms`.
+    Clients can override per-session. Set via DEFAULT_VAD_PREFIX_PADDING_MS.
+    """
+
+    default_vad_silence_duration_ms: int = Field(default=350, ge=0)
+    """
+    Default trailing silence required to declare end-of-turn, in
+    milliseconds. Used to seed `session.turn_detection.silence_duration_ms`.
+    Clients can override per-session. Set via DEFAULT_VAD_SILENCE_DURATION_MS.
+    """
+
     qwen3_tts_default_voice: str = "Ryan"
     """
     Default preset speaker for the Qwen3-TTS CustomVoice variants when the

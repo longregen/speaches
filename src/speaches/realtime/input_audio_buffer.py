@@ -61,6 +61,39 @@ def _effective_avg_logprob_threshold(base: float | None, duration_ms: int) -> fl
     return base + frac * (_AVG_LOGPROB_GATE_LOOSE_FLOOR - base)
 
 
+def _segment_stats(
+    segments: list,
+) -> tuple[
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+    float | None,
+]:
+    if not segments:
+        return (None,) * 9
+    n = len(segments)
+    s_n = s_l = s_c = 0.0
+    mn_n = mn_l = mn_c = float("inf")
+    mx_n = mx_l = mx_c = float("-inf")
+    for seg in segments:
+        nsp, lp, cr = seg.no_speech_prob, seg.avg_logprob, seg.compression_ratio
+        s_n += nsp
+        mn_n = min(mn_n, nsp)
+        mx_n = max(mx_n, nsp)
+        s_l += lp
+        mn_l = min(mn_l, lp)
+        mx_l = max(mx_l, lp)
+        s_c += cr
+        mn_c = min(mn_c, cr)
+        mx_c = max(mx_c, cr)
+    return s_n / n, mn_n, mx_n, s_l / n, mn_l, mx_l, s_c / n, mn_c, mx_c
+
+
 class VadState(BaseModel):
     audio_start_ms: int | None = None
     audio_end_ms: int | None = None
@@ -238,36 +271,28 @@ class InputAudioBufferTranscriber:
             raise
         elapsed = time.perf_counter() - start
 
-        # Per-segment whisper signals. Stats are emitted on every accepted turn
-        # too so operators can read the inspector to pick thresholds.
-        avg_no_speech: float | None = None
-        min_no_speech: float | None = None
-        max_no_speech: float | None = None
-        avg_logprob: float | None = None
-        min_logprob: float | None = None
-        max_logprob: float | None = None
-        avg_compression: float | None = None
-        min_compression: float | None = None
-        max_compression: float | None = None
+        # Stats are emitted even on accepted turns so operators can read the
+        # inspector to pick thresholds.
         nsp_threshold = self.session.no_speech_prob_threshold
         logprob_threshold = self.session.avg_logprob_threshold
         audio_duration_ms = int(len(self.input_audio_buffer.data_w_vad_applied) * 1000 / SAMPLE_RATE)
         effective_logprob_threshold = _effective_avg_logprob_threshold(logprob_threshold, audio_duration_ms)
+        segments = (
+            result.segments if isinstance(result, openai.types.audio.TranscriptionVerbose) and result.segments else []
+        )
+        (
+            avg_no_speech,
+            min_no_speech,
+            max_no_speech,
+            avg_logprob,
+            min_logprob,
+            max_logprob,
+            avg_compression,
+            min_compression,
+            max_compression,
+        ) = _segment_stats(segments)
         if isinstance(result, openai.types.audio.TranscriptionVerbose):
             transcript = result.text
-            if result.segments:
-                probs = [s.no_speech_prob for s in result.segments]
-                avg_no_speech = sum(probs) / len(probs)
-                min_no_speech = min(probs)
-                max_no_speech = max(probs)
-                lps = [s.avg_logprob for s in result.segments]
-                avg_logprob = sum(lps) / len(lps)
-                min_logprob = min(lps)
-                max_logprob = max(lps)
-                crs = [s.compression_ratio for s in result.segments]
-                avg_compression = sum(crs) / len(crs)
-                min_compression = min(crs)
-                max_compression = max(crs)
             nsp_fail = nsp_threshold is not None and avg_no_speech is not None and avg_no_speech > nsp_threshold
             logprob_fail = (
                 effective_logprob_threshold is not None

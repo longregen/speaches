@@ -7,7 +7,7 @@ from contextlib import contextmanager
 import logging
 import threading
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
 import openai
@@ -583,6 +583,12 @@ class ResponseHandler:
             # avoid flooding the inspector `tool` lane.
             tool_state: dict[str, dict[str, bool]] = {}
 
+            def _emit_once(state: dict[str, bool], key: str, kind: str, **payload: Any) -> None:
+                if state[key]:
+                    return
+                state[key] = True
+                inspect_emit.emit("tool", kind, **payload)
+
             async def _forward_tool_progress(
                 stream: AsyncIterator[ChatCompletionChunk],
             ) -> AsyncGenerator[ChatCompletionChunk, None]:
@@ -612,45 +618,15 @@ class ResponseHandler:
                                 args = tool.get("args")
                                 state = tool_state.setdefault(
                                     name,
-                                    {
-                                        "use_token": False,
-                                        "result": False,
-                                        "start_summary": False,
-                                        "summary": False,
-                                    },
+                                    {"use_token": False, "result": False, "start_summary": False, "summary": False},
                                 )
-                                if not state["use_token"]:
-                                    state["use_token"] = True
-                                    inspect_emit.emit(
-                                        "tool",
-                                        "use_token",
-                                        name=name,
-                                        args=args,
-                                    )
-                                if not state["result"] and (status == "done" or result is not None or error):
-                                    state["result"] = True
-                                    inspect_emit.emit(
-                                        "tool",
-                                        "result",
-                                        name=name,
-                                        result=result,
-                                        error=bool(error),
-                                    )
-                                if not state["start_summary"] and summarizing:
-                                    state["start_summary"] = True
-                                    inspect_emit.emit(
-                                        "tool",
-                                        "start_summary",
-                                        name=name,
-                                    )
-                                if not state["summary"] and summary:
-                                    state["summary"] = True
-                                    inspect_emit.emit(
-                                        "tool",
-                                        "summary",
-                                        name=name,
-                                        summary=summary,
-                                    )
+                                _emit_once(state, "use_token", "use_token", name=name, args=args)
+                                if status == "done" or result is not None or error:
+                                    _emit_once(state, "result", "result", name=name, result=result, error=bool(error))
+                                if summarizing:
+                                    _emit_once(state, "start_summary", "start_summary", name=name)
+                                if summary:
+                                    _emit_once(state, "summary", "summary", name=name, summary=summary)
                             except Exception:  # pragma: no cover
                                 logger.exception("failed to emit tool inspector event")
                     yield ch

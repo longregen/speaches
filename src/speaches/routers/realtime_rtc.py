@@ -304,16 +304,7 @@ async def realtime_webrtc(
         completion_client=completion_client,
         vad_model_manager=executor_registry.vad.model_manager,
         vad_model_id=executor_registry.vad_model_id,
-        session=create_session_object_configuration(
-            model,
-            "conversation",
-            None,
-            None,
-            config.default_realtime_stt_model,
-            config.default_no_speech_prob_threshold,
-            config.default_avg_logprob_threshold,
-            config.default_speech_speed,
-        ),
+        session=create_session_object_configuration(model, config=config),
     )
     from pathlib import Path as _Path
 

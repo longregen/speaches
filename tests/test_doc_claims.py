@@ -27,11 +27,13 @@ def test_ct2_cuda_env_var_set_from_gpu_mem_limit() -> None:
     assert ct2_config.endswith(str(DEFAULT_GPU_MEM_LIMIT))
 
 
-def test_conversation_item_input_audio_has_no_audio_data_field() -> None:
+def test_conversation_item_input_audio_shape() -> None:
+    # `audio` is set only by the audio-direct-to-LLM path.
     fields = ConversationItemContentInputAudio.model_fields
-    assert "audio" not in fields, "ConversationItemContentInputAudio should not have an 'audio' field"
     assert "transcript" in fields
     assert "type" in fields
+    assert "audio" in fields
+    assert fields["audio"].default is None
 
 
 def test_model_alias_resolution(tmp_path: Path) -> None:

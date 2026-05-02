@@ -89,11 +89,13 @@ def _transcribe_with_oom_retry(
 def build_clip_timestamps(
     speech_segments: list[SpeechTimestamp],
     vad_options: VadOptions,
-) -> list[dict[str, float]] | None:
+) -> list[dict[str, int]] | None:
     if not speech_segments:
         return None
     merged = merge_segments(speech_segments, vad_options)
-    return [{"start": seg["start"] / SAMPLE_RATE, "end": seg["end"] / SAMPLE_RATE} for seg in merged]
+    # faster_whisper.vad.collect_chunks slices `audio[chunk["start"]:chunk["end"]]`
+    # so start/end must be integer sample indices (not seconds).
+    return [{"start": seg["start"], "end": seg["end"]} for seg in merged]
 
 
 logger = logging.getLogger(__name__)

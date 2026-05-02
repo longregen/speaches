@@ -195,7 +195,7 @@ async def handle_input_audio_buffer_append(ctx: SessionContext, event: InputAudi
         vad_event = vad_detection_flow(input_audio_buffer, ctx.session.turn_detection, ctx)
         if vad_event is not None:
             if isinstance(vad_event, InputAudioBufferSpeechStartedEvent):
-                _handle_speech_started(ctx, vad_event, input_audio_buffer)
+                handle_speech_started_interruption(ctx, vad_event)
             else:
                 ctx.pubsub.publish_nowait(vad_event)
             if isinstance(vad_event, InputAudioBufferSpeechStoppedEvent):
@@ -290,9 +290,8 @@ async def _partial_transcription_loop(ctx: SessionContext, input_audio_buffer: I
                 logger.exception("Partial transcription failed")
 
 
-def _handle_speech_started(
-    ctx: SessionContext, event: InputAudioBufferSpeechStartedEvent, input_audio_buffer: InputAudioBuffer
-) -> None:
+def handle_speech_started_interruption(ctx: SessionContext, event: InputAudioBufferSpeechStartedEvent) -> None:
+    input_audio_buffer = ctx.audio_buffers.get(event.item_id)
     if ctx.backfill_task is not None and not ctx.backfill_task.done():
         ctx.backfill_task.cancel()
         ctx.backfill_task = None
@@ -432,11 +431,6 @@ def _handle_speech_started(
         name="partial_transcription",
     )
     ctx.partial_transcription_task.add_done_callback(task_done_callback)
-
-
-@event_router.register("input_audio_buffer.speech_started")
-def handle_speech_started_interruption(ctx: SessionContext, event: InputAudioBufferSpeechStartedEvent) -> None:
-    pass
 
 
 @event_router.register("input_audio_buffer.speech_stopped")

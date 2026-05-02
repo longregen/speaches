@@ -9,9 +9,9 @@ import urllib.request
 import pytest
 
 from tests import e2e_realtime as rt
+from tests.scenarios._helpers import SPEACHES_PORT, SPEACHES_URL
 
-SPEACHES_URL = rt.SPEACHES_URL
-WS_URL = rt.WS_URL
+WS_URL = f"ws://127.0.0.1:{SPEACHES_PORT}"
 
 
 async def _poll_session_id() -> str:
@@ -30,7 +30,7 @@ async def _poll_session_id() -> str:
 async def _drain_inspector(sid: str, stop_event: asyncio.Event) -> list[dict]:
     import websockets
 
-    url = f"ws://127.0.0.1:{rt.SPEACHES_PORT}/v1/inspect/{sid}/stream"
+    url = f"ws://127.0.0.1:{SPEACHES_PORT}/v1/inspect/{sid}/stream"
     events: list[dict] = []
     async with websockets.connect(url) as ws:
         while not stop_event.is_set():

@@ -308,6 +308,7 @@ async def test_create_and_run_response_sets_completed() -> None:
     ctx.session.model = "test-model"
     ctx.session.speech_model = "test-speech"
     ctx.session.no_response_token = None
+    ctx.session.audio_direct_to_llm = False
     ctx.pubsub = pubsub
     ctx.conversation = conversation
     ctx.response_manager = ResponseManager(completion_client=completion_client, pubsub=pubsub)

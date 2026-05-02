@@ -167,7 +167,8 @@ class TestRealtimeSessionConfiguration:
         with caplog.at_level("INFO"):
             create_session_object_configuration(model="gpt-4o-realtime-preview", intent="conversation")
 
-        assert "Conversation mode (OpenAI standard)" in caplog.text
+        assert "Conversation mode" in caplog.text
+        assert "gpt-4o-realtime-preview" in caplog.text
 
 
 class TestRealtimeWebSocketEndpoint:

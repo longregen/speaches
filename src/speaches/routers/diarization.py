@@ -9,7 +9,9 @@ import numpy as np
 from pydantic import BaseModel
 
 from speaches.audio import Audio
+from speaches.dependencies import AudioFileDependency, ExecutorRegistryDependency  # noqa: TC001
 from speaches.diarization import KnownSpeaker
+from speaches.model_aliases import ModelId  # noqa: TC001
 from speaches.routers.utils import find_executor_for_model_or_raise, get_model_card_data_or_raise
 from speaches.utils import parse_data_url_to_audio
 
@@ -21,9 +23,6 @@ if TYPE_CHECKING:
     from pyannote.core.segment import Segment
     from pyannote.core.utils.types import TrackName
     import torch
-
-    from speaches.dependencies import AudioFileDependency, ExecutorRegistryDependency
-    from speaches.model_aliases import ModelId
 
 logger = logging.getLogger(__name__)
 router = APIRouter()

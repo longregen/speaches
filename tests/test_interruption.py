@@ -43,6 +43,15 @@ class FakeSessionContext:
         self.partial_transcription_task = None
         self.partial_transcription_lock = asyncio.Lock()
         self.barge_in_task = None
+        self.backfill_task = None
+        self.barge_in_corr = None
+        self.tts_drain_task = None
+        self.tts_drain_deadline_wall = None
+        self.tts_drain_first_audio_wall_unix = None
+        self.tts_drain_turn_id = None
+        self.tts_drain_audio_duration_ms = None
+        self.tts_drain_phrases_delivered = None
+        self.audio_store = None
 
 
 def _make_speech_started_event(ctx: FakeSessionContext) -> InputAudioBufferSpeechStartedEvent:
@@ -204,13 +213,17 @@ async def test_delayed_barge_in_cancelled_by_speech_stopped() -> None:
     handle_speech_started_interruption(ctx, started_event)
     assert ctx.barge_in_task is not None
 
-    # speech_stopped before delay expires -> should cancel the barge-in
+    # speech_stopped before delay expires -> cancel the barge-in. The brief
+    # speech is treated as noise: state stays GENERATING (the assistant
+    # continues uninterrupted), and the speech buffer is NOT transcribed.
+    # See input_audio_buffer_event_router.handle_input_audio_buffer_speech_stopped's
+    # `was_suppressed_barge_in` branch.
     stopped_event = _make_speech_stopped_event(ctx)
     handle_input_audio_buffer_speech_stopped(ctx, stopped_event)
 
     assert ctx.barge_in_task is None
     mock_response.stop.assert_not_called()
-    assert ctx.state == ConversationState.PROCESSING
+    assert ctx.state == ConversationState.GENERATING
 
 
 @pytest.mark.asyncio
@@ -263,8 +276,13 @@ async def test_second_speech_started_cancels_pending_barge_in() -> None:
     handle_speech_started_interruption(ctx, event2)
     await asyncio.sleep(0)
 
+    # Each speech_started restarts the barge-in timer: the first one is
+    # cancelled, a new one is created. This protects against VAD glitches
+    # silently disabling barge-in if a 2nd speech_started fires without a
+    # speech_stopped between.
     assert first_barge_in.cancelled()
-    assert ctx.barge_in_task is None
+    assert ctx.barge_in_task is not None
+    assert ctx.barge_in_task is not first_barge_in
 
     await _cancel_partial(ctx)
 

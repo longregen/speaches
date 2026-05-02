@@ -734,6 +734,12 @@
   });
 
   const tt = $('#tooltip');
+  const STAT_ROWS = [
+    { key: 'no_speech_prob', label: 'no_speech', thrKey: 'no_speech_prob_threshold', altThrKey: 'threshold' },
+    { key: 'logprob', label: 'logprob', thrKey: 'avg_logprob_threshold', effThrKey: 'effective_avg_logprob_threshold', durKey: 'audio_duration_ms' },
+    { key: 'compression_ratio', label: 'compression' },
+  ];
+
   function showTooltip(e, mx, my) {
     const laneColor = D.PALETTES[tl.palette][e.lane] || '#999';
     const p = e.payload || {};
@@ -787,34 +793,26 @@
     if (p.reason) rows.push(['reason', p.reason]);
     if (p.error) rows.push(['error', shorten(p.error, 600)]);
     const fmt = v => (typeof v === 'number' ? (Math.abs(v) < 1e-3 ? v.toExponential(2) : v.toFixed(3)) : v);
-    if (p.avg_no_speech_prob != null) {
-      const parts = [`avg ${fmt(p.avg_no_speech_prob)}`];
-      if (p.min_no_speech_prob != null) parts.push(`min ${fmt(p.min_no_speech_prob)}`);
-      if (p.max_no_speech_prob != null) parts.push(`max ${fmt(p.max_no_speech_prob)}`);
-      if (p.no_speech_prob_threshold != null) parts.push(`thr ${p.no_speech_prob_threshold}`);
-      else if (p.threshold != null) parts.push(`thr ${p.threshold}`);
-      rows.push(['no_speech', parts.join(' · ')]);
-    }
-    if (p.avg_logprob != null) {
-      const parts = [`avg ${fmt(p.avg_logprob)}`];
-      if (p.min_logprob != null) parts.push(`min ${fmt(p.min_logprob)}`);
-      if (p.max_logprob != null) parts.push(`max ${fmt(p.max_logprob)}`);
-      if (p.effective_avg_logprob_threshold != null) {
-        const base = p.avg_logprob_threshold;
-        const eff = p.effective_avg_logprob_threshold;
-        const dur = p.audio_duration_ms;
+    for (const spec of STAT_ROWS) {
+      const v = p['avg_' + spec.key];
+      if (v == null) continue;
+      const parts = [`avg ${fmt(v)}`];
+      const mn = p['min_' + spec.key], mx = p['max_' + spec.key];
+      if (mn != null) parts.push(`min ${fmt(mn)}`);
+      if (mx != null) parts.push(`max ${fmt(mx)}`);
+      const eff = spec.effThrKey ? p[spec.effThrKey] : null;
+      if (eff != null) {
+        const base = p[spec.thrKey];
+        const dur = spec.durKey ? p[spec.durKey] : null;
         const baseStr = base != null && base !== eff ? ` (base ${base}` + (dur != null ? ` @ ${dur}ms` : '') + ')' : '';
         parts.push(`thr ${fmt(eff)}${baseStr}`);
-      } else if (p.avg_logprob_threshold != null) {
-        parts.push(`thr ${p.avg_logprob_threshold}`);
+      } else {
+        const thr = spec.thrKey ? p[spec.thrKey] : null;
+        const altThr = spec.altThrKey ? p[spec.altThrKey] : null;
+        if (thr != null) parts.push(`thr ${thr}`);
+        else if (altThr != null) parts.push(`thr ${altThr}`);
       }
-      rows.push(['logprob', parts.join(' · ')]);
-    }
-    if (p.avg_compression_ratio != null) {
-      const parts = [`avg ${fmt(p.avg_compression_ratio)}`];
-      if (p.min_compression_ratio != null) parts.push(`min ${fmt(p.min_compression_ratio)}`);
-      if (p.max_compression_ratio != null) parts.push(`max ${fmt(p.max_compression_ratio)}`);
-      rows.push(['compression', parts.join(' · ')]);
+      rows.push([spec.label, parts.join(' · ')]);
     }
 
     const c = e.corr || {};

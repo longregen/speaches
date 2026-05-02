@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+from collections.abc import AsyncGenerator
 import contextlib
 import json as _json
 import logging
@@ -20,15 +19,13 @@ from fastapi import (
 )
 from fastapi.responses import StreamingResponse
 
-from speaches.dependencies import ConfigDependency, ExecutorRegistryDependency  # noqa: TC001
+from speaches.config import Config
+from speaches.dependencies import ConfigDependency, ExecutorRegistryDependency
 from speaches.inspect import registry
 from speaches.realtime.utils import verify_websocket_api_key
 from speaches.types.inspect import SessionHistoryEntry, SessionMeta
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator
-
-    from speaches.config import Config
     from speaches.inspect.audio_store import Channel
 
 logger = logging.getLogger(__name__)
@@ -128,11 +125,9 @@ async def get_audio(
         sidecar = _session_dir(config) / f"{sid}.audio.json"
         if sidecar.is_file():
             try:
-                import json
-
-                meta = json.loads(sidecar.read_text())
+                meta = _json.loads(sidecar.read_text())
                 offset_ms = meta.get("tracks", {}).get(channel, {}).get("offset_ms", 0)
-            except (OSError, json.JSONDecodeError, KeyError):
+            except (OSError, _json.JSONDecodeError, KeyError):
                 pass
         adj_from = max(0, from_ms - offset_ms)
         adj_to = max(0, to_ms - offset_ms) if to_ms > 0 else 0
