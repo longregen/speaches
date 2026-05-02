@@ -230,6 +230,14 @@ class Config(BaseSettings):
     by default. Set via DEFAULT_NO_SPEECH_PROB_THRESHOLD environment variable.
     """
 
+    default_speech_speed: float = Field(default=1.0, ge=0.5, le=2.0)
+    """
+    Default TTS playback speed used by the realtime API when the client
+    hasn't specified one via session.update.speech_speed. Passed through
+    to the speech executor (Kokoro accepts [0.5, 2.0]). Clients can
+    override per-session at runtime. Set via DEFAULT_SPEECH_SPEED.
+    """
+
     default_avg_logprob_threshold: float | None = Field(default=-0.6, le=0.0)
     """
     Default Whisper avg_logprob threshold used as a second-stage gate after

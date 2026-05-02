@@ -55,7 +55,7 @@ from speaches.types.realtime import (
 )
 
 if TYPE_CHECKING:
-    from collections.abc import AsyncGenerator, Generator
+    from collections.abc import AsyncGenerator, AsyncIterator, Generator
 
     from openai.resources.chat import AsyncCompletions
     from openai.types.chat import ChatCompletionChunk
@@ -321,7 +321,7 @@ class ResponseHandler:
                             model=self.speech_model,
                             voice=self.configuration.voice,
                             text=sentence_clean,
-                            speed=1.0,
+                            speed=self.configuration.speech_speed,
                         )
                         inspect_emit.emit(
                             "tts_req",
@@ -583,7 +583,9 @@ class ResponseHandler:
             # avoid flooding the inspector `tool` lane.
             tool_state: dict[str, dict[str, bool]] = {}
 
-            async def _forward_tool_progress(stream):  # type: ignore[no-untyped-def]
+            async def _forward_tool_progress(
+                stream: AsyncIterator[ChatCompletionChunk],
+            ) -> AsyncGenerator[ChatCompletionChunk, None]:
                 async for ch in stream:
                     extra = getattr(ch, "model_extra", None) or {}
                     progress = extra.get("tool_progress")

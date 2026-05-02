@@ -335,6 +335,9 @@ class Response(BaseModel):
     tool_choice: ToolChoice
     tools: list[Tool]
     voice: str
+    # Server-side extension, not part of OpenAI Realtime API.
+    # Inherits from Session.speech_speed via model_dump at response build time.
+    speech_speed: float = Field(default=1.0, ge=0.5, le=2.0)
     extra_body: dict[str, Any] | None = None
 
 
@@ -364,6 +367,9 @@ class Session(BaseModel):
     turn_detection: TurnDetection | None
     speech_model: str
     voice: str
+    # Server-side extension, not part of OpenAI Realtime API. TTS playback rate
+    # passed to the speech executor (Kokoro range [0.5, 2.0]).
+    speech_speed: float = Field(default=1.0, ge=0.5, le=2.0)
     audio_direct_to_llm: bool = False
     audio_direct_model: str = "gemma-4-e4b-it"
     audio_direct_prompt: str = ""
@@ -402,6 +408,8 @@ class PartialSession(BaseModel):
     turn_detection: PartialTurnDetection | None | NotGiven = NOT_GIVEN
     speech_model: str | NotGiven = NOT_GIVEN
     voice: str | NotGiven = NOT_GIVEN
+    # Server-side extension, not part of OpenAI Realtime API
+    speech_speed: Annotated[float, Field(ge=0.5, le=2.0)] | NotGiven = NOT_GIVEN
     audio_direct_to_llm: bool | NotGiven = NOT_GIVEN
     audio_direct_model: str | NotGiven = NOT_GIVEN
     audio_direct_prompt: str | NotGiven = NOT_GIVEN

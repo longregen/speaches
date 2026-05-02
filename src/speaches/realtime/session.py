@@ -18,6 +18,7 @@ def create_session_object_configuration(
     default_realtime_stt_model: str = "Systran/faster-distil-whisper-small.en",
     no_speech_prob_threshold: float | None = 0.6,
     avg_logprob_threshold: float | None = -0.6,
+    speech_speed: float = 1.0,
 ) -> Session:
     # References:
     # - https://platform.openai.com/docs/guides/realtime/overview
@@ -43,6 +44,7 @@ def create_session_object_configuration(
         instructions=OPENAI_REALTIME_INSTRUCTIONS,
         speech_model="speaches-ai/Kokoro-82M-v1.0-ONNX",
         voice="af_heart",
+        speech_speed=speech_speed,
         input_audio_format="pcm16",
         output_audio_format="pcm16",
         input_audio_transcription=InputAudioTranscription(
