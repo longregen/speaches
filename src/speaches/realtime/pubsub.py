@@ -47,7 +47,7 @@ class EventPubSub(PubSub[Event]):
         try:
             while True:
                 event = await subscriber.get()
-                if event.type == event_type:  # Only yield events matching the requested type
+                if event.type == event_type:
                     yield event
         finally:
             self.subscribers.remove(subscriber)

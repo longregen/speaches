@@ -113,7 +113,9 @@ class ConversationItemContentAudio(BaseModel):
         return PartAudio(transcript=self.transcript)
 
 
-class ConversationItemContentInputAudio(BaseModel):  # TODO: document the weirdness about this type
+class ConversationItemContentInputAudio(
+    BaseModel
+):  # TODO: audio field is optional but type name implies mandatory audio
     type: Literal["input_audio"] = "input_audio"
     transcript: str | None
     audio: str | None = None
@@ -165,7 +167,7 @@ class BaseConversationItem(BaseModel):
 class ConversationItemMessage(BaseConversationItem):
     type: Literal["message"] = "message"
     role: Literal["assistant", "user", "system"]
-    content: list[ConversationItemContent]  # TODO: custom type
+    content: list[ConversationItemContent]
 
 
 class ConversationItemFunctionCall(BaseConversationItem):
@@ -310,11 +312,6 @@ class Tool(BaseModel):
     execution: Literal["client", "server"] = "client"
 
 
-# ChatCompletionToolChoiceOptionParam: TypeAlias = Union[
-#     Literal["none", "auto", "required"], ChatCompletionNamedToolChoiceParam
-# ]
-
-
 class Function(BaseModel):
     name: str
 
@@ -328,7 +325,7 @@ type ToolChoice = Literal["none", "auto", "required"] | NamedToolChoice
 
 
 class Response(BaseModel):
-    conversation: Literal["auto"]  # NOTE: there's also "none" but it's not supported in this implementation
+    conversation: Literal["auto"]  # NOTE: "none" is valid per spec but not supported in this implementation
     input: list[ConversationItem]
     instructions: str
     max_response_output_tokens: int | Literal["inf"]
@@ -338,13 +335,16 @@ class Response(BaseModel):
     tool_choice: ToolChoice
     tools: list[Tool]
     voice: str
+    extra_body: dict[str, Any] | None = None
 
 
 # TODO: which defaults should be set (if any)?
 class Session(BaseModel):
     id: str  # TODO: should this be auto-generated?
     input_audio_format: AudioFormat
-    input_audio_transcription: InputAudioTranscription  # NOTE: according to the spec None is a valid value here, but in this implementation it would be impossible to do anything without a transcription model
+    input_audio_transcription: (
+        InputAudioTranscription  # NOTE: spec allows None, but transcription is always required here
+    )
     instructions: str
     max_response_output_tokens: int | Literal["inf"]
     modalities: list[Modality]
@@ -360,8 +360,10 @@ class Session(BaseModel):
     turn_detection: TurnDetection | None
     speech_model: str
     voice: str
-    audio_direct_to_llm: bool = True
-    audio_direct_prompt: str = "Transcribe and respond to the user's speech above."
+    audio_direct_to_llm: bool = False
+    audio_direct_model: str = "gemma-4-e4b-it"
+    audio_direct_prompt: str = ""
+    extra_body: dict[str, Any] | None = None
 
     @field_validator("no_response_token")
     @classmethod
@@ -395,7 +397,9 @@ class PartialSession(BaseModel):
     speech_model: str | NotGiven = NOT_GIVEN
     voice: str | NotGiven = NOT_GIVEN
     audio_direct_to_llm: bool | NotGiven = NOT_GIVEN
+    audio_direct_model: str | NotGiven = NOT_GIVEN
     audio_direct_prompt: str | NotGiven = NOT_GIVEN
+    extra_body: dict[str, Any] | None | NotGiven = NOT_GIVEN
 
     @field_validator("no_response_token")
     @classmethod
@@ -443,9 +447,6 @@ class InputAudioBufferCommittedEvent(BaseModel):
     event_id: str = Field(default_factory=generate_event_id)
     item_id: str
     previous_item_id: str | None
-
-
-# The following classes are the same as the ones in openai.types.realtime but with fields assigned some default values. This is to reduce the amount of boilerplate code when creating these events.
 
 
 class InputAudioBufferSpeechStartedEvent(OpenAIInputAudioBufferSpeechStartedEvent):
@@ -613,6 +614,11 @@ class ResponseAudioDoneEvent(OpenAIResponseAudioDoneEvent):
     event_id: str = Field(default_factory=generate_event_id)
     content_index: int = 0
     output_index: int = 0
+    # Total duration of the audio for this output item, in milliseconds. Lets
+    # clients predict the wall-clock end of TTS playback (first delta wall +
+    # audio_duration_ms) so they can schedule UI state, drain timers, or
+    # disable barge-in detection until the tail finishes.
+    audio_duration_ms: int = 0
 
 
 class ResponseAudioTranscriptDoneEvent(OpenAIResponseAudioTranscriptDoneEvent):
@@ -692,6 +698,17 @@ type ResponseContentDoneEvent = (
     | ResponseFunctionCallArgumentsDoneEvent
 )
 
+
+# NOTE: passthrough for the upstream `tool_progress` chat-completion field; outside the OpenAI Realtime spec.
+class ResponseToolProgressEvent(BaseModel):
+    model_config = _FROZEN
+
+    type: Literal["response.tool_progress"] = "response.tool_progress"
+    event_id: str = Field(default_factory=generate_event_id)
+    response_id: str
+    tools: list[dict]
+
+
 type ResponseServerEvent = (
     ResponseCreatedEvent
     | ResponseOutputItemAddedEvent
@@ -707,9 +724,9 @@ type ResponseServerEvent = (
     | ResponseContentPartDoneEvent
     | ResponseOutputItemDoneEvent
     | ResponseDoneEvent
+    | ResponseToolProgressEvent
 )
 
-# https://platform.openai.com/docs/guides/realtime/overview#events
 CLIENT_EVENT_TYPES = {
     "session.update",
     "input_audio_buffer.append",
@@ -754,6 +771,7 @@ SERVER_EVENT_TYPES = {
     "response.output_audio.done",
     "response.function_call_arguments.delta",
     "response.function_call_arguments.done",
+    "response.tool_progress",
     "rate_limits.updated",
 }
 
@@ -777,7 +795,6 @@ ServerEvent = Annotated[
 server_event_type_adapter = TypeAdapter[ServerEvent](ServerEvent)
 
 
-# Message fragmentation types for WebRTC
 class FullMessageEvent(BaseModel):
     id: str
     type: Literal["full_message"] = "full_message"

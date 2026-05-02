@@ -27,9 +27,7 @@ def create_completion_params(
     max_tokens = None if response.max_response_output_tokens == "inf" else response.max_response_output_tokens
     kwargs = {}
     if len(response.tools) > 0:
-        # openai.BadRequestError: Error code: 400 - {'error': {'message': "Invalid value for 'tool_choice': 'tool_choice' is only allowed when 'tools' are specified.", 'type': 'invalid_request_error', 'param': 'tool_choice', 'code': None}}
-        # openai.BadRequestError: Error code: 400 - {'error': {'message': "Invalid 'tools': empty array. Expected an array with minimum length 1, but got an empty array instead.", 'type': 'invalid_request_error', 'param': 'tools', 'code': 'empty_array'}}
-        # TODO: I might be able to get away with not doing any conversion here, but I'm not sure. Test it out.
+        # TODO: check if the tool conversion is necessary or if raw tool dicts work
         kwargs["tools"] = [
             ChatCompletionToolParam(
                 type=tool.type,
@@ -56,7 +54,10 @@ def create_completion_params(
         stream_options=ChatCompletionStreamOptionsParam(include_usage=True),
         **kwargs,
     )
-    params["extra_body"] = {"chat_template_kwargs": {"enable_thinking": False}}  # ty: ignore[invalid-key]  # pyright: ignore[reportTypedDictUnknownKey]
+    extra_body: dict = {"chat_template_kwargs": {"enable_thinking": False}}
+    if response.extra_body:
+        extra_body.update(response.extra_body)
+    params["extra_body"] = extra_body  # ty: ignore[invalid-key]  # pyright: ignore[reportTypedDictUnknownKey]
     return params
 
 
@@ -83,13 +84,15 @@ def conversation_item_to_chat_message(
                     assert content.text, content
                     return ChatCompletionUserMessageParam(role="user", content=content.text)
                 case "input_audio":
-                    if content.audio:
+                    if content.audio and audio_direct_prompt is not None:
                         parts: list = [
                             {"type": "input_audio", "input_audio": {"data": content.audio, "format": "wav"}},
                         ]
                         if audio_direct_prompt:
                             parts.append({"type": "text", "text": audio_direct_prompt})
                         return ChatCompletionUserMessageParam(role="user", content=parts)
+                    if content.audio:
+                        return ChatCompletionUserMessageParam(role="user", content="[user spoke via audio]")
                     if not content.transcript:
                         logger.error(f"Conversation item doesn't have a non-empty transcript: {item}")
                         return None
@@ -121,8 +124,23 @@ def conversation_item_to_chat_message(
 def items_to_chat_messages(
     items: list[ConversationItem], audio_direct_prompt: str | None = None
 ) -> list[ChatCompletionMessageParam]:
-    return [
-        chat_message
-        for chat_message in (conversation_item_to_chat_message(item, audio_direct_prompt) for item in items)
-        if chat_message is not None
-    ]
+    if audio_direct_prompt is None:
+        return [m for m in (conversation_item_to_chat_message(item) for item in items) if m is not None]
+    # Only attach audio on the last input_audio item; earlier ones become text placeholders
+    last_audio_idx = -1
+    for i, item in enumerate(items):
+        if (
+            item.type == "message"
+            and item.content
+            and len(item.content) == 1
+            and item.content[0].type == "input_audio"
+            and getattr(item.content[0], "audio", None)
+        ):
+            last_audio_idx = i
+    result: list[ChatCompletionMessageParam] = []
+    for i, item in enumerate(items):
+        prompt = audio_direct_prompt if i == last_audio_idx else None
+        m = conversation_item_to_chat_message(item, prompt)
+        if m is not None:
+            result.append(m)
+    return result

@@ -16,38 +16,23 @@ def create_session_object_configuration(
     language: str | None = None,
     transcription_model: str | None = None,
     default_realtime_stt_model: str = "Systran/faster-distil-whisper-small.en",
+    no_speech_prob_threshold: float | None = 0.6,
 ) -> Session:
-    """Create session configuration with OpenAI Realtime API compatibility.
-
-    Standard OpenAI behavior (intent=conversation):
-    - URL model parameter is the conversation model (e.g., gpt-4o-realtime-preview)
-    - input_audio_transcription.model is the transcription model (e.g., whisper-1)
-
-    Speaches extension for transcription-only mode (intent=transcription):
-    - URL model parameter is the transcription model (for .NET API compatibility)
-    - conversation_model uses a default (since not needed for transcription-only)
-
-    References:
-    - https://platform.openai.com/docs/guides/realtime/overview
-    - https://platform.openai.com/docs/api-reference/realtime-server-events/session/update
-
-    """
+    # References:
+    # - https://platform.openai.com/docs/guides/realtime/overview
+    # - https://platform.openai.com/docs/api-reference/realtime-server-events/session/update
     if intent == "transcription":
-        # Speaches extension: for transcription-only mode, model param = transcription model
-        # This provides compatibility with .NET OpenAI API and other simple clients
-        final_transcription_model = (
-            transcription_model or model
-        )  # Use explicit transcription_model if provided, else model param
-        conversation_model = "gpt-4o-realtime-preview"  # Default (not used in transcription-only mode)
+        # Speaches extension: model param = transcription model for .NET OpenAI API compatibility
+        final_transcription_model = transcription_model or model
+        conversation_model = "gpt-4o-realtime-preview"
         logger.info(
             f"Transcription-only mode: using {final_transcription_model} for transcription, {conversation_model} for conversation (unused)"
         )
     else:
-        # Standard OpenAI behavior: model param is conversation model
         conversation_model = model
         final_transcription_model = transcription_model or default_realtime_stt_model
         logger.info(
-            f"Conversation mode (OpenAI standard): using {conversation_model} for conversation, {final_transcription_model} for transcription"
+            f"Conversation mode: using {conversation_model} for conversation, {final_transcription_model} for transcription"
         )
 
     return Session(
@@ -61,7 +46,7 @@ def create_session_object_configuration(
         output_audio_format="pcm16",
         input_audio_transcription=InputAudioTranscription(
             model=final_transcription_model,
-            language=language,  # auto-detect language when None
+            language=language,
         ),
         turn_detection=TurnDetection(
             type="server_vad",
@@ -74,4 +59,5 @@ def create_session_object_configuration(
         tools=[],
         tool_choice="auto",
         max_response_output_tokens="inf",
+        no_speech_prob_threshold=no_speech_prob_threshold,
     )

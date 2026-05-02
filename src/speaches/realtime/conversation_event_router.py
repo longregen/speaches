@@ -54,7 +54,6 @@ class Conversation:
             return
 
         if previous_item_id == "root":
-            # Insert at the beginning of the conversation
             actual_previous_item_id = None
             new_items = OrderedDict[str, ConversationItem]()
             new_items[item.id] = item
@@ -77,7 +76,6 @@ class Conversation:
                     new_items[item.id] = item
             self.items = new_items
         else:
-            # Append at the end
             actual_previous_item_id = next(reversed(self.items), None)
             self.items[item.id] = item
 
@@ -93,12 +91,11 @@ class Conversation:
                 )
             )
         else:
-            # TODO: What should be done if this a conversation that's being currently genererated?
+            # TODO: What should be done if this is a conversation that's currently being generated?
             del self.items[item_id]
             self.pubsub.publish_nowait(ConversationItemDeletedEvent(item_id=item_id))
 
 
-# Client Events
 @event_router.register("conversation.item.create")
 def handle_conversation_item_create_event(ctx: SessionContext, event: ConversationItemCreateEvent) -> None:
     # TODO: What should happen if this gets called when a response is being generated?

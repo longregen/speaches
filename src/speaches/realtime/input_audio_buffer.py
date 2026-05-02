@@ -40,17 +40,15 @@ _INITIAL_CAPACITY = 3200  # 200ms at 16kHz, ~12.5 KiB
 logger = logging.getLogger(__name__)
 
 
-# NOTE not in `src/speaches/realtime/input_audio_buffer_event_router.py` due to circular import
 class VadState(BaseModel):
     audio_start_ms: int | None = None
     audio_end_ms: int | None = None
     # Inspector-only: true once a pending (min_speech=0) candidate has been signalled
     # for the current speech attempt, so repeated `pending_start` events aren't emitted.
     pending_start_ms: int | None = None
-    # TODO: consider keeping track of what was the last audio timestamp that was processed. This value could be used to control how often the VAD is run.
+    # TODO: consider keeping track of what was the last audio timestamp that was processed.
 
 
-# TODO: use `np.int16` instead of `np.float32` for audio data
 class InputAudioBuffer:
     def __init__(self, pubsub: EventPubSub) -> None:
         self.id = generate_item_id()
@@ -132,7 +130,7 @@ class InputAudioBuffer:
     def consolidate(self) -> None:
         pass
 
-    # TODO: come up with a better name
+    # TODO: come up with a better name for data_w_vad_applied
     @property
     def data_w_vad_applied(self) -> NDArray[np.float32]:
         if self.vad_state.audio_start_ms is None:
@@ -219,36 +217,45 @@ class InputAudioBufferTranscriber:
             raise
         elapsed = time.perf_counter() - start
 
-        # Extract transcript and check noise gate
+        # Stats are emitted on every accepted turn too, so operators can read the
+        # inspector to pick a threshold instead of guessing.
+        avg_no_speech: float | None = None
+        min_no_speech: float | None = None
+        max_no_speech: float | None = None
+        threshold = self.session.no_speech_prob_threshold
         if isinstance(result, openai.types.audio.TranscriptionVerbose):
             transcript = result.text
-            threshold = self.session.no_speech_prob_threshold
-            if threshold is not None and result.segments:
-                avg_no_speech = sum(s.no_speech_prob for s in result.segments) / len(result.segments)
-                if avg_no_speech > threshold:
-                    logger.info(
-                        f"Noise gate: discarding audio (avg_no_speech_prob={avg_no_speech:.3f} > {threshold}, "
-                        f"transcript={transcript!r}, elapsed={elapsed:.2f}s)"
+            if result.segments:
+                probs = [s.no_speech_prob for s in result.segments]
+                avg_no_speech = sum(probs) / len(probs)
+                min_no_speech = min(probs)
+                max_no_speech = max(probs)
+            if threshold is not None and avg_no_speech is not None and avg_no_speech > threshold:
+                logger.info(
+                    f"Noise gate: discarding audio (avg_no_speech_prob={avg_no_speech:.3f} > {threshold}, "
+                    f"transcript={transcript!r}, elapsed={elapsed:.2f}s)"
+                )
+                inspect_emit.emit(
+                    "stt",
+                    "rejected_noise",
+                    text=transcript,
+                    avg_no_speech_prob=round(avg_no_speech, 4),
+                    min_no_speech_prob=round(min_no_speech, 4) if min_no_speech is not None else None,
+                    max_no_speech_prob=round(max_no_speech, 4) if max_no_speech is not None else None,
+                    threshold=threshold,
+                    elapsed_ms=int(elapsed * 1000),
+                )
+                self.pubsub.publish_nowait(
+                    ConversationItemInputAudioTranscriptionCompletedEvent(
+                        item_id=self.input_audio_buffer.id,
+                        transcript="",
+                        usage=UsageTranscriptTextUsageDuration(
+                            seconds=self.input_audio_buffer.duration,
+                            type="duration",
+                        ),
                     )
-                    inspect_emit.emit(
-                        "stt",
-                        "rejected_noise",
-                        text=transcript,
-                        avg_no_speech_prob=round(avg_no_speech, 4),
-                        threshold=threshold,
-                        elapsed_ms=int(elapsed * 1000),
-                    )
-                    self.pubsub.publish_nowait(
-                        ConversationItemInputAudioTranscriptionCompletedEvent(
-                            item_id=self.input_audio_buffer.id,
-                            transcript="",
-                            usage=UsageTranscriptTextUsageDuration(
-                                seconds=self.input_audio_buffer.duration,
-                                type="duration",
-                            ),
-                        )
-                    )
-                    return
+                )
+                return
         elif isinstance(result, tuple):
             transcript = result[0]
         else:
@@ -310,6 +317,10 @@ class InputAudioBufferTranscriber:
             audio_start_ms=audio_start_ms,
             audio_end_ms=audio_end_ms,
             elapsed_ms=int(elapsed * 1000),
+            avg_no_speech_prob=round(avg_no_speech, 4) if avg_no_speech is not None else None,
+            min_no_speech_prob=round(min_no_speech, 4) if min_no_speech is not None else None,
+            max_no_speech_prob=round(max_no_speech, 4) if max_no_speech is not None else None,
+            no_speech_prob_threshold=threshold,
         )
         inspect_emit.emit("turn", "user_committed", item_id=item.id)
         self.pubsub.publish_nowait(
@@ -383,9 +394,12 @@ class InputAudioBufferTranscriber:
             )
         )
 
-    # TODO: add `timeout` parameter
+    # TODO: add timeout parameter
     def start(self) -> None:
         assert self.task is None
-        handler = self._audio_direct_handler if self.session.audio_direct_to_llm else self._handler
+        td = self.session.turn_detection
+        create_response = td is None or td.create_response
+        use_direct = self.session.audio_direct_to_llm and create_response
+        handler = self._audio_direct_handler if use_direct else self._handler
         self.task = asyncio.create_task(handler())
         self.task.add_done_callback(task_done_callback)

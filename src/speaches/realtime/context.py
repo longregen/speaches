@@ -39,9 +39,11 @@ class SessionContext:
         session: Session,
         tts_model_manager: SpeechHandler | None = None,
         stt_model_manager: TranscriptionHandler | None = None,
+        upstream_completion_client: AsyncCompletions | None = None,
     ) -> None:
         self.executor_registry = executor_registry
         self.completion_client = completion_client
+        self.upstream_completion_client = upstream_completion_client or completion_client
         self.vad_model_manager = vad_model_manager
         self.vad_model_id = vad_model_id
 
@@ -56,6 +58,23 @@ class SessionContext:
         self.partial_transcription_lock = asyncio.Lock()
         self.partial_transcription_task: asyncio.Task[None] | None = None
         self.barge_in_task: asyncio.Task[None] | None = None
+        self.backfill_task: asyncio.Task[None] | None = None
+
+        # tts_drain_*: state for the deferred turn:turn_end emission. Set when a
+        # response completes successfully with audio; cleared when the drain task
+        # emits turn_end (or is cancelled by barge-during-drain or session close).
+        self.tts_drain_task: asyncio.Task[None] | None = None
+        self.tts_drain_deadline_wall: float | None = None
+        self.tts_drain_first_audio_wall_unix: float | None = None
+        self.tts_drain_turn_id: str | None = None
+        self.tts_drain_audio_duration_ms: int | None = None
+        self.tts_drain_phrases_delivered: list[tuple[str, float, int]] | None = None
+
+        # Snapshot of relay correlation captured at the moment bargein_pending is
+        # emitted, so the matching bargein_fired / bargein_cancelled carry the same
+        # response_id + turn_id even if the relay has cleared response_id by then
+        # (drain path clears it before barge commits, breaking pair-by-response_id).
+        self.barge_in_corr: dict[str, str | None] | None = None
 
         self.inspector: InspectorRelay | None = None
         self.audio_store: AudioStore | None = None

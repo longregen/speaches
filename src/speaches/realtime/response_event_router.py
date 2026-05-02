@@ -48,6 +48,7 @@ from speaches.types.realtime import (
     ResponseOutputItemDoneEvent,
     ResponseTextDeltaEvent,
     ResponseTextDoneEvent,
+    ResponseToolProgressEvent,
     ServerConversationItem,
     Tool,
     create_server_error,
@@ -69,6 +70,61 @@ event_router = EventRouter()
 
 _RESPONSE_EXCLUDE_FIELDS = frozenset({"conversation", "input", "output_audio_format", "metadata"})
 _tts_executor = concurrent.futures.ThreadPoolExecutor(max_workers=4, thread_name_prefix="tts")
+
+
+def _split_heard_unheard(phrases_delivered: list[tuple[str, float, int]], played_ms: int) -> tuple[str, str]:
+    cumulative_ms = 0
+    heard_parts: list[str] = []
+    unheard_parts: list[str] = []
+    for text, _, audio_ms in phrases_delivered:
+        if cumulative_ms + audio_ms <= played_ms or cumulative_ms < played_ms:
+            heard_parts.append(text)
+        else:
+            unheard_parts.append(text)
+        cumulative_ms += audio_ms
+    return " ".join(heard_parts), " ".join(unheard_parts)
+
+
+def _inject_unheard_context(conversation: Conversation, unheard: str) -> None:
+    if not unheard:
+        return
+    from speaches.types.realtime import ConversationItemContentInputText, ConversationItemMessage
+
+    ctx_msg = f'[system: your response was interrupted by the user. The following was NOT heard: "{unheard}"]'
+    dev_item = ConversationItemMessage(
+        role="user",
+        content=[ConversationItemContentInputText(text=ctx_msg, type="input_text")],
+        status="completed",
+    )
+    conversation.create_item(dev_item)
+
+
+async def _emit_turn_end_at_deadline(ctx: SessionContext) -> None:
+    from speaches.inspect import emit as inspect_emit
+
+    try:
+        deadline = ctx.tts_drain_deadline_wall or 0.0
+        delay = deadline - time.time()
+        if delay > 0:
+            await asyncio.sleep(delay)
+        inspect_emit.emit(
+            "turn",
+            "turn_end",
+            corr={"turn_id": ctx.tts_drain_turn_id},
+            role="assistant",
+            status="completed",
+            audio_duration_ms=ctx.tts_drain_audio_duration_ms,
+        )
+        inspect_emit.set_turn_id(None)
+    finally:
+        ctx.tts_drain_task = None
+        ctx.tts_drain_deadline_wall = None
+        ctx.tts_drain_first_audio_wall_unix = None
+        ctx.tts_drain_turn_id = None
+        ctx.tts_drain_audio_duration_ms = None
+        ctx.tts_drain_phrases_delivered = None
+        if ctx.state == ConversationState.GENERATING:
+            ctx.state = ConversationState.IDLE
 
 
 def _build_response_update(event_response: object) -> dict:
@@ -109,7 +165,7 @@ class ResponseHandler:
         self.id = generate_response_id()
         self.completion_client = completion_client
         self.tts_model_manager = tts_model_manager
-        self.model = model  # NOTE: unfortunatly `Response` doesn't have a `model` field
+        self.model = model  # NOTE: `Response` doesn't have a `model` field
         self.speech_model = speech_model
         self.configuration = configuration
         self.conversation = conversation
@@ -127,6 +183,9 @@ class ResponseHandler:
         self.dismissed = False
         self.pre_response_item_id: str | None = None
         self.audio_duration_ms: int = 0
+        self._first_audio_wall: float | None = None  # time.perf_counter, monotonic
+        self._first_audio_wall_unix: float | None = None  # time.time, for absolute drain deadline
+        self._phrases_delivered: list[tuple[str, float, int]] = []
 
     @contextmanager
     def add_output_item[T: ServerConversationItem](self, item: T) -> Generator[T, None, None]:
@@ -286,6 +345,21 @@ class ResponseHandler:
                                 ms_audio = (audio_samples * 1000) // 24000
                                 self.audio_duration_ms += ms_audio
                                 phrase_audio_ms += ms_audio
+                                # Capture first-chunk wall times up front so the
+                                # audio_level emit below can re-stamp to the
+                                # predicted playback wall (Kokoro outpaces realtime
+                                # by ~10-50x; the chunks render at first_audio_wall +
+                                # cumulative_ms, so the sparkline must too).
+                                if chunk_idx == 0 and self._first_audio_wall is None:
+                                    self._first_audio_wall = time.perf_counter()
+                                    self._first_audio_wall_unix = time.time()
+                                playback_wall: float | None = None
+                                if self._first_audio_wall_unix is not None:
+                                    # Sample lands at the midpoint of this chunk's
+                                    # playback window.
+                                    playback_wall = (
+                                        self._first_audio_wall_unix + (self.audio_duration_ms - ms_audio / 2) / 1000
+                                    )
                                 from speaches.inspect import registry as _reg
 
                                 _sid = inspect_emit.session_id_ctx.get()
@@ -299,6 +373,7 @@ class ResponseHandler:
                                     inspect_emit.emit(
                                         "audio_level",
                                         "sample",
+                                        ts_wall_override=playback_wall,
                                         channel="tts_out",
                                         rms=rms,
                                         window_ms=ms_audio,
@@ -312,7 +387,7 @@ class ResponseHandler:
                                         pcm_samples=audio_samples,
                                         ms_audio=ms_audio,
                                         cumulative_ms=phrase_audio_ms,
-                                        first_chunk_ms=int((time.perf_counter() - phrase_t0) * 1000),
+                                        first_chunk_ms=int((self._first_audio_wall - phrase_t0) * 1000),
                                     )
                                 else:
                                     inspect_emit.emit(
@@ -350,13 +425,18 @@ class ResponseHandler:
                                     chunks=chunk_idx,
                                     total_ms=int((time.perf_counter() - phrase_t0) * 1000),
                                 )
+                                self._phrases_delivered.append((sentence_clean, phrase_t0, phrase_audio_ms))
                             inspect_emit.set_phrase_id(None)
 
                 async with asyncio.TaskGroup() as tg:
                     tg.create_task(process_text_stream())
                     tg.create_task(process_tts_stream())
 
-                self.pubsub.publish_nowait(ResponseAudioDoneEvent(item_id=item.id, response_id=self.id))
+                self.pubsub.publish_nowait(
+                    ResponseAudioDoneEvent(
+                        item_id=item.id, response_id=self.id, audio_duration_ms=self.audio_duration_ms
+                    )
+                )
                 self.pubsub.publish_nowait(
                     ResponseAudioTranscriptDoneEvent(
                         item_id=item.id, response_id=self.id, transcript=content.transcript
@@ -494,7 +574,87 @@ class ResponseHandler:
         )
         try:
             completion_params = create_completion_params(self.model, messages, self.configuration)
-            chunk_stream = await self.completion_client.create(**completion_params)
+            raw_chunk_stream = await self.completion_client.create(**completion_params)
+
+            # Upstream emits agentic tool progress as a top-level `tool_progress`
+            # field on chunks with empty `choices`. The OpenAI client preserves
+            # unknown fields in `chunk.model_extra`. Each emit is cumulative
+            # (full historical-tools list), so we dedup per-tool/lifecycle to
+            # avoid flooding the inspector `tool` lane.
+            tool_state: dict[str, dict[str, bool]] = {}
+
+            async def _forward_tool_progress(stream):  # type: ignore[no-untyped-def]
+                async for ch in stream:
+                    extra = getattr(ch, "model_extra", None) or {}
+                    progress = extra.get("tool_progress")
+                    if progress:
+                        try:
+                            self.pubsub.publish_nowait(
+                                ResponseToolProgressEvent(
+                                    response_id=self.id,
+                                    tools=list(progress),
+                                )
+                            )
+                        except Exception:  # pragma: no cover — never block the stream
+                            logger.exception("failed to publish tool_progress")
+                        for tool in progress:
+                            try:
+                                name = tool.get("name") if isinstance(tool, dict) else None
+                                if not name:
+                                    continue
+                                status = tool.get("status")
+                                result = tool.get("result")
+                                error = tool.get("error")
+                                summary = tool.get("summary")
+                                summarizing = tool.get("summarizing")
+                                args = tool.get("args")
+                                state = tool_state.setdefault(
+                                    name,
+                                    {
+                                        "use_token": False,
+                                        "result": False,
+                                        "start_summary": False,
+                                        "summary": False,
+                                    },
+                                )
+                                if not state["use_token"]:
+                                    state["use_token"] = True
+                                    inspect_emit.emit(
+                                        "tool",
+                                        "use_token",
+                                        name=name,
+                                        args=args,
+                                    )
+                                if not state["result"] and (status == "done" or result is not None or error):
+                                    state["result"] = True
+                                    inspect_emit.emit(
+                                        "tool",
+                                        "result",
+                                        name=name,
+                                        result=result,
+                                        error=bool(error),
+                                    )
+                                if not state["start_summary"] and summarizing:
+                                    state["start_summary"] = True
+                                    inspect_emit.emit(
+                                        "tool",
+                                        "start_summary",
+                                        name=name,
+                                    )
+                                if not state["summary"] and summary:
+                                    state["summary"] = True
+                                    inspect_emit.emit(
+                                        "tool",
+                                        "summary",
+                                        name=name,
+                                        summary=summary,
+                                    )
+                            except Exception:  # pragma: no cover
+                                logger.exception("failed to emit tool inspector event")
+                    yield ch
+
+            chunk_stream = _forward_tool_progress(raw_chunk_stream)
+
             first: ChatCompletionChunk | None = None
             async for chunk in chunk_stream:
                 if chunk.choices:
@@ -554,6 +714,18 @@ class ResponseHandler:
         self.task = asyncio.create_task(self.generate_response())
         self.task.add_done_callback(task_done_callback)
 
+    def estimate_heard_text(self) -> tuple[str, str]:
+        if not self._phrases_delivered or self._first_audio_wall is None:
+            full = "".join(t for t, _, _ in self._phrases_delivered)
+            return "", full
+        played_ms = int((time.perf_counter() - self._first_audio_wall) * 1000)
+        return _split_heard_unheard(self._phrases_delivered, played_ms)
+
+    def played_ms_so_far(self) -> int:
+        if self._first_audio_wall is None:
+            return 0
+        return int((time.perf_counter() - self._first_audio_wall) * 1000)
+
     def stop(self) -> None:
         self._cancelled = True
         if self.task is not None and not self.task.done():
@@ -595,10 +767,13 @@ class ResponseManager:
         from speaches.inspect import emit as inspect_emit
 
         self.cancel_active()
+        use_audio_direct = ctx.session.audio_direct_to_llm
+        effective_model = ctx.session.audio_direct_model if use_audio_direct else model
+        effective_client = ctx.upstream_completion_client if use_audio_direct else self._completion_client
         handler = ResponseHandler(
-            completion_client=self._completion_client,
+            completion_client=effective_client,
             tts_model_manager=ctx.tts_model_manager,
-            model=model,
+            model=effective_model,
             speech_model=ctx.session.speech_model,
             configuration=configuration,
             conversation=conversation,
@@ -611,7 +786,7 @@ class ResponseManager:
         ctx.state = ConversationState.GENERATING
 
         inspect_emit.set_response_id(handler.id)
-        inspect_emit.emit("response", "plan_start", trigger="create_and_run", model=model)
+        inspect_emit.emit("response", "plan_start", trigger="create_and_run", model=effective_model)
         inspect_emit.emit("turn", "turn_start", role="assistant")
 
         handler.start()
@@ -624,6 +799,11 @@ class ResponseManager:
             logger.info(f"Response {handler.id} was cancelled")
             handler.response.status = "cancelled"
             status = "cancelled"
+            heard, unheard = handler.estimate_heard_text()
+            if heard or unheard:
+                _inject_unheard_context(conversation, unheard)
+                if unheard:
+                    inspect_emit.emit("turn", "bargein_context", heard=heard, unheard=unheard)
             self._pubsub.publish_nowait(ResponseDoneEvent(response=handler.response))
         except Exception as e:
             logger.exception(f"Response {handler.id} failed")
@@ -645,18 +825,47 @@ class ResponseManager:
                 done_payload["total_audio_ms"] = handler.audio_duration_ms
             if err is not None:
                 done_payload["error"] = err
+
             if status == "cancelled":
+                done_payload["played_ms"] = handler.played_ms_so_far()
                 inspect_emit.emit("response", "cancelled", **done_payload)
+                inspect_emit.emit(
+                    "turn",
+                    "turn_end",
+                    role="assistant",
+                    status="cancelled",
+                    played_ms=handler.played_ms_so_far(),
+                )
+                inspect_emit.set_turn_id(None)
             else:
                 inspect_emit.emit("response", "done", **done_payload)
-            inspect_emit.emit("turn", "turn_end", role="assistant", status=status)
+                if (
+                    status == "completed"
+                    and handler.audio_duration_ms > 0
+                    and handler._first_audio_wall_unix is not None  # noqa: SLF001
+                    and not handler.dismissed
+                ):
+                    # Defer turn_end to the predicted end of TTS playback.
+                    first_audio_wall_unix = handler._first_audio_wall_unix  # noqa: SLF001
+                    deadline = first_audio_wall_unix + handler.audio_duration_ms / 1000
+                    captured_turn_id = inspect_emit.get_turn_id()
+                    ctx.tts_drain_deadline_wall = deadline
+                    ctx.tts_drain_first_audio_wall_unix = first_audio_wall_unix
+                    ctx.tts_drain_turn_id = captured_turn_id
+                    ctx.tts_drain_audio_duration_ms = handler.audio_duration_ms
+                    ctx.tts_drain_phrases_delivered = list(handler._phrases_delivered)  # noqa: SLF001
+                    ctx.tts_drain_task = asyncio.create_task(_emit_turn_end_at_deadline(ctx), name="tts_drain")
+                    ctx.tts_drain_task.add_done_callback(task_done_callback)
+                else:
+                    inspect_emit.emit("turn", "turn_end", role="assistant", status=status)
+                    inspect_emit.set_turn_id(None)
+
             inspect_emit.set_response_id(None)
-            inspect_emit.set_turn_id(None)
             inspect_emit.set_item_id(None)
 
             if self._active is handler:
                 self._active = None
-                if ctx.state == ConversationState.GENERATING:
+                if ctx.state == ConversationState.GENERATING and ctx.tts_drain_task is None:
                     ctx.state = ConversationState.IDLE
 
 

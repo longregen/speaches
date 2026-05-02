@@ -19,13 +19,10 @@ class EventRouter:
         self.event_handlers: dict[str, Callable] = {}
 
     def register(self, event_type: str) -> Callable:
-        """Decorator to register an event handler for a specific event."""
-
         def decorator(func: Callable) -> Callable:
             if event_type in self.event_handlers:
                 raise ValueError(f"An event handler for '{event_type}' is already registered.")
 
-            # Register the handler for the event
             self.event_handlers[event_type] = func
             return func
 

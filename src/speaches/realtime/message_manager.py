@@ -102,7 +102,6 @@ class WsServerMessageManager(BaseMessageManager):
         logger.info("Receiver task started")
         while True:
             try:
-                # logger.debug("Waiting for event")
                 data = await ws.receive_text()
             except fastapi.WebSocketDisconnect:
                 logger.info("Failed to receive message due to disconnect")
@@ -119,7 +118,6 @@ class WsServerMessageManager(BaseMessageManager):
                 continue
 
             self.event_pubsub.publish_nowait(event)
-            # logger.debug(f"Received {event.type} event")
 
     async def sender(self, ws: fastapi.WebSocket) -> None:
         logger.info("Sender task started")
@@ -127,7 +125,6 @@ class WsServerMessageManager(BaseMessageManager):
         self.ready.set()
         try:
             while True:
-                # logger.debug("Waiting for event")
                 event = await q.get()
                 if event.type not in SERVER_EVENT_TYPES:
                     continue

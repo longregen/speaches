@@ -41,11 +41,8 @@ from speaches.types.chat import (
 )
 from speaches.utils import APIProxyError
 
-# Resources:
-# - https://platform.openai.com/docs/guides/audio
-
 # https://platform.openai.com/docs/api-reference/audio/createSpeech#audio-createspeech-model
-DEFAULT_SPEECH_MODEL = "tts-1"  # or "tts-1-hd"
+DEFAULT_SPEECH_MODEL = "tts-1"
 # https://platform.openai.com/docs/api-reference/audio/createTranscription#audio-createtranscription-model
 DEFAULT_TRANSCRIPTION_MODEL = "whisper-1"
 AUDIO_TRANSCRIPTION_CACHE_SIZE = 4096
@@ -78,7 +75,7 @@ class CompletionCreateParamsBase(OpenAICompletionCreateParamsBase):
 
     @model_validator(mode="after")
     def validate_audio_format_when_stream(self) -> Self:
-        # NOTE: OpenAI only supports pcm format for streaming. We can support any format but keeping this hardcoded for consistency
+        # NOTE: OpenAI only supports pcm16 for streaming; keeping this constraint for consistency
         if self.stream and self.audio is not None and self.audio.format != "pcm16":
             raise ValueError(
                 f"Unsupported value: 'audio.format' does not support '{self.audio.format}' when stream=true. Supported values are: 'pcm16'."
@@ -138,7 +135,7 @@ class AudioChatStream:
     ) -> None:
         self.chat_completion_chunk_stream = chat_completion_chunk_stream
         self.speech_client = speech_client
-        self.sentence_chunker = sentence_chunker  # NOTE: this should be for every choice is I want to support n > 1
+        self.sentence_chunker = sentence_chunker  # NOTE: one chunker per n>1 choice would be needed to support n > 1
         self.body = body
         self.audio_id = generate_audio_id()
         self.expires_at = int((datetime.now(UTC) + timedelta(seconds=AUDIO_TRANSCRIPTION_TTL_SECONDS)).timestamp())
@@ -148,14 +145,16 @@ class AudioChatStream:
     async def text_chat_completion_chunk_stream(self) -> AsyncGenerator[ChatCompletionChunk]:
         start = time.perf_counter()
         async for chunk in self.chat_completion_chunk_stream:
-            if len(chunk.choices) == 0:
-                logger.warning(f"Received a chunk with no choices: {chunk}")
+            if not chunk.choices:
+                if getattr(chunk, "model_extra", None):
+                    yield chunk
+                else:
+                    logger.warning(f"Received a chunk with no choices: {chunk}")
                 continue
             self.chat_completion_id = chunk.id
             self.created = chunk.created
             choice = chunk.choices[0]
             if not self.body.modalities or "audio" not in self.body.modalities:
-                # no transform if audio not requested (or modalities absent entirely, e.g. realtime loopback)
                 yield chunk
                 continue
             if choice.delta.content is not None:
@@ -178,7 +177,7 @@ class AudioChatStream:
             sentence_clean = text_utils.clean_for_tts(sentence)
             if len(sentence_clean) == 0:
                 logger.warning(f"Skipping empty sentence. ORIGINAL: {sentence}")
-                continue  # skip empty sentences
+                continue
             res = await self.speech_client.create(
                 input=sentence_clean,
                 model=self.body.speech_model,
@@ -208,7 +207,6 @@ class AudioChatStream:
             merged_stream = aiostream.stream.merge(
                 self.text_chat_completion_chunk_stream(), self.audio_chat_completion_chunk_stream()
             )
-            # without stream I got warning
             async with merged_stream.stream() as stream:
                 try:
                     async for chunk in stream:
@@ -236,7 +234,6 @@ async def handle_completions(
     for i, message in enumerate(body.messages):
         if message.role == "user":
             content = message.content
-            # per https://platform.openai.com/docs/guides/audio?audio-generation-quickstart-example=audio-in#quickstart, input audio should be within the `message.content` list
             if not isinstance(content, list):
                 continue
 
@@ -245,7 +242,7 @@ async def handle_completions(
                 content_part = content[j]
                 if content_part.type == "input_audio":
                     audio_bytes = base64.b64decode(content_part.input_audio.data)
-                    # TODO: how does the endpoint know the format lol?
+                    # TODO: format is not conveyed by the input_audio content part
                     transcript = await transcription_client.create(
                         file=BytesIO(audio_bytes),
                         model=body.transcription_model,
@@ -260,18 +257,15 @@ async def handle_completions(
             body.messages[i] = ChatCompletionAssistantMessageParam(
                 role="assistant",
                 content=transcript,
-                # NOTE: I believe the fields below will always be `None`
                 name=message.name,
                 refusal=message.refusal,
                 tool_calls=message.tool_calls,
                 function_call=message.function_call,
             )
 
-    # NOTE: rather than doing a `model_copy` it might be better to override the fields when doing the `model_dump` and destructuring
     proxied_body = body.model_copy(deep=True)
     proxied_body.modalities = ["text"]
     proxied_body.audio = None
-    # NOTE: Adding --use-one-literal-as-default breaks the `exclude_defaults=True` behavior
     try:
         chat_completion = await chat_completion_client.create(
             **proxied_body.model_dump(

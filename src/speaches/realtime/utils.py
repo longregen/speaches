@@ -54,30 +54,16 @@ async def verify_websocket_api_key(
     websocket: WebSocket,
     config: "Config",
 ) -> None:
-    """Verify API key for WebSocket connections.
-
-    Supports multiple authentication methods:
-    - Query parameter: ?api_key=<key>
-    - Authorization header: Authorization: Bearer <key>
-    - X-API-Key header: X-API-Key: <key>
-
-    References:
-    - https://platform.openai.com/docs/guides/realtime/overview
-
-    """
     if config.api_key is None:
-        return  # No API key configured, authentication not required
+        return
 
-    # Try to get API key from query parameters first
     api_key = websocket.query_params.get("api_key")
 
-    # If not in query params, try Authorization header
     if not api_key:
         auth_header = websocket.headers.get("authorization")
         if auth_header and auth_header.startswith("Bearer "):
-            api_key = auth_header[7:]  # Remove "Bearer " prefix
+            api_key = auth_header[7:]
 
-    # If still no API key found, check for X-API-Key header
     if not api_key:
         api_key = websocket.headers.get("x-api-key")
 

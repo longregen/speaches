@@ -107,7 +107,6 @@ async def realtime(
     - https://platform.openai.com/docs/api-reference/realtime-server-events/session/update
 
     """
-    # Manually verify WebSocket authentication before accepting connection
     try:
         await verify_websocket_api_key(ws, config)
     except WebSocketException:
@@ -127,15 +126,30 @@ async def realtime(
         api_key=config.api_key.get_secret_value() if config.api_key else "cant-be-empty",
         max_retries=0,
     ).chat.completions
+    # Direct upstream client for audio-direct mode (bypasses loopback proxy
+    # which doesn't handle input_audio content parts)
+    upstream_completion_client = AsyncOpenAI(
+        base_url=config.chat_completion_base_url,
+        api_key=config.chat_completion_api_key.get_secret_value()
+        if config.chat_completion_api_key
+        else "cant-be-empty",
+        max_retries=0,
+    ).chat.completions
 
     session = create_session_object_configuration(
-        model, intent, language, transcription_model, config.default_realtime_stt_model
+        model,
+        intent,
+        language,
+        transcription_model,
+        config.default_realtime_stt_model,
+        config.default_no_speech_prob_threshold,
     )
     if instructions is not None:
         session.instructions = instructions
     ctx = SessionContext(
         executor_registry=executor_registry,
         completion_client=completion_client,
+        upstream_completion_client=upstream_completion_client,
         vad_model_manager=executor_registry.vad.model_manager,
         vad_model_id=executor_registry.vad_model_id,
         session=session,
@@ -163,6 +177,10 @@ async def realtime(
             mm_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await mm_task
+        if ctx.backfill_task is not None and not ctx.backfill_task.done():
+            ctx.backfill_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await ctx.backfill_task
         if ctx.barge_in_task is not None and not ctx.barge_in_task.done():
             ctx.barge_in_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
@@ -171,6 +189,11 @@ async def realtime(
             ctx.partial_transcription_task.cancel()
             with contextlib.suppress(asyncio.CancelledError):
                 await ctx.partial_transcription_task
+        if ctx.tts_drain_task is not None and not ctx.tts_drain_task.done():
+            # Cancel without emitting; inspector's "ongoing turn" rendering handles the dangling turn_start.
+            ctx.tts_drain_task.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await ctx.tts_drain_task
         active = ctx.response_manager.active
         if active is not None and active.task is not None and not active.task.done():
             ctx.response_manager.cancel_active()
