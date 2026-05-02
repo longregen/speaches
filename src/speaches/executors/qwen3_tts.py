@@ -176,16 +176,9 @@ _MISTRAL_SPLIT_REGEX = (
 )
 
 
+# NOTE (workaround): Qwen3-TTS does not reliably emit EOS, filling max_new_tokens
+# with low-energy audio that sits several dB above silence; trim by dB threshold.
 def _trim_trailing_silence(samples: Any, sample_rate: int, top_db: float = 25.0, pad_ms: int = 200) -> Any:
-    """Trim trailing silence/low-energy padding from a mono float32 waveform.
-
-    Qwen3-TTS does not reliably emit EOS — it generates the target speech then
-    fills the remaining `max_new_tokens` budget with low-energy audio (hum,
-    rustle) that can sit several dB above pure silence. We use librosa's
-    `effects.trim` (a dB-threshold trim with hysteresis) to find where the
-    signal drops `top_db` below its peak, which robustly catches the end of
-    speech, and keep `pad_ms` of tail so the last word doesn't clip.
-    """
     import librosa  # type: ignore[import-untyped]
     import numpy as np
 
@@ -199,16 +192,10 @@ def _trim_trailing_silence(samples: Any, sample_rate: int, top_db: float = 25.0,
     return samples[: min(end, samples.size)]
 
 
+# NOTE (workaround): transformers 5.x `_patch_mistral_regex` has bugs (duplicate-kwarg
+# TypeError, AttributeError on raw tokenizers.Tokenizer); apply the fix ourselves to
+# avoid the Qwen3-TTS text encoder mis-tokenizing and running unbounded to max_new_tokens.
 def _apply_mistral_regex_fix(tokenizer: Any) -> bool:
-    """Apply the mistral pre-tokenizer regex fix directly on a loaded tokenizer.
-
-    `transformers.tokenization_utils_tokenizers._patch_mistral_regex` has two bugs
-    in 5.x (duplicate-kwarg TypeError, and an AttributeError when invoked with the
-    raw `tokenizers.Tokenizer`), so we apply the fix ourselves from
-    `processor.tokenizer` after `from_pretrained`. Without this the Qwen3-TTS
-    text encoder mis-tokenizes input and the model runs unbounded to
-    `max_new_tokens`, producing minutes of garbled audio.
-    """
     import tokenizers as _tk  # type: ignore[import-untyped]
 
     backend = getattr(tokenizer, "backend_tokenizer", None) or getattr(tokenizer, "_tokenizer", None)
@@ -222,7 +209,6 @@ def _apply_mistral_regex_fix(tokenizer: Any) -> bool:
     if current is None:
         backend.pre_tokenizer = split_pretokenizer
     elif isinstance(current, _tk.pre_tokenizers.Sequence):
-        # Replace the first element of the sequence.
         backend.pre_tokenizer[0] = split_pretokenizer
     else:
         if isinstance(current, _tk.pre_tokenizers.Metaspace):
@@ -255,7 +241,6 @@ class Qwen3TTSModelRegistry(ModelRegistry):
                 yield _build_model_info(mid)
 
     def get_model_files(self, model_id: str) -> None:
-        # Verify weights are locally cached; no network call when HF_HUB_OFFLINE=1.
         huggingface_hub.snapshot_download(repo_id=model_id, local_files_only=True)
 
     def download_model_files(self, model_id: str) -> None:
@@ -355,16 +340,9 @@ if QWEN3_TTS_AVAILABLE:
 
             logger.info("Generated audio for %d characters in %.3fs", len(request.text), time.perf_counter() - start)
 
+        # NOTE (workaround): Qwen3-TTS fails to emit EOS on ~1 in 5 runs regardless
+        # of sampling params; detect runaway via per-char duration budget and retry.
         def _generate_with_retry(self, state: Qwen3TTSLoadedModel, text: str, voice: str) -> tuple[list, int]:
-            """Generate audio for a text chunk, retrying when Qwen3-TTS fails to emit EOS.
-
-            Qwen3-TTS fails to emit EOS on roughly 1 in 5 runs regardless of sampling
-            parameters (tested across top_p=0.7..1.0, greedy, and with/without the
-            mistral regex fix). When that happens the model runs to `max_new_tokens`
-            and produces minutes of speech-shaped noise. We detect this by comparing
-            output duration against a generous per-character budget and retry up to
-            `_MAX_RETRIES` times.
-            """
             max_audio_seconds = max(_MIN_AUDIO_BUDGET_SECONDS, len(text) * _SECONDS_PER_CHAR_CAP)
             last_wavs: list = []
             last_sr = 24000
@@ -409,14 +387,6 @@ if QWEN3_TTS_AVAILABLE:
             return model.generate_voice_design(text=text, language="Auto", instruct=instruct, **_GEN_KWARGS)
 
         def _resolve_speaker(self, voice: str) -> str:
-            """Map a request `voice` to a Qwen3-TTS CustomVoice preset speaker.
-
-            - If `voice` is one of the 9 preset names (case-sensitive): use it.
-            - If `voice` matches case-insensitively: canonicalise to the preset.
-            - Else if `voice` is an OpenAI-compatible voice (e.g. 'alloy'):
-              fall back to `Config.qwen3_tts_default_voice` with a warning.
-            - Else: raise ValueError with the list of supported speakers.
-            """
             if voice in _CUSTOM_VOICE_LANGUAGES:
                 return voice
             lower_map = {k.lower(): k for k in _CUSTOM_VOICE_LANGUAGES}

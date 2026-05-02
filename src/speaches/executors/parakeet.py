@@ -30,9 +30,7 @@ from speaches.tracing import traced, traced_generator
 
 # TODO: support model quants
 
-# LIBRARY_NAME = "onnx" # NOTE: library name is derived and not stored in the README
 TASK_NAME_TAG = "automatic-speech-recognition"
-# TAGS = {"nemo-conformer-tdt"} # NOTE: I've tried to use this tag however it seems to be derived (likely from config.json) and isn't present when parsing the local model card
 
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
@@ -147,7 +145,6 @@ class ParakeetModelManager(BaseModelManager[TextResultsAsrAdapter]):
         with self.load_model(request.model) as parakeet:
             # TODO: issue warnings when client specifies unsupported parameters like `prompt`, `temperature`, `hotwords`, etc.
             # TODO: Use request.speech_segments for audio chunking
-
             results = parakeet.with_timestamps().recognize(request.audio.data)
 
             match request.response_format:

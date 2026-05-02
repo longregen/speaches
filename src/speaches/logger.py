@@ -7,7 +7,7 @@ def setup_logger(log_level: str) -> None:
     # https://www.youtube.com/watch?v=9L77QExPmI0
     # https://docs.python.org/3/library/logging.config.html
     logging_config = {
-        "version": 1,  # required
+        "version": 1,
         "disable_existing_loggers": False,
         "formatters": {
             "simple": {"format": "%(asctime)s:%(levelname)s:%(name)s:%(funcName)s:%(lineno)d:%(message)s"},

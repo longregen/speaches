@@ -22,19 +22,6 @@ class CudaOutOfMemoryError(Exception):
 
 
 class APIProxyError(Exception):
-    """Exception for structured, actionable API or proxy errors.
-
-    Args:
-        message: Human-readable error message.
-        hint: Short actionable hint for the user.
-        suggestions: List of actionable suggestions for the user.
-        status_code: HTTP status code (default 500).
-        debug: Optional debug info (stack trace, request ID, etc.).
-        error_id: Unique error ID for traceability.
-        timestamp: When the error occurred (ISO 8601, UTC).
-
-    """
-
     def __init__(
         self,
         message: str,

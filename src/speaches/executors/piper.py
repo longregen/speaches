@@ -71,9 +71,7 @@ class PiperModel(Model):
     voices: list[PiperModelVoice]
 
 
-# Known piper models — fallback if model card metadata is missing/broken.
 KNOWN_MODELS: dict[str, tuple[str, str, int]] = {
-    # model_id: (voice_name, language, sample_rate)
     "speaches-ai/piper-en_US-hfc_female-medium": ("hfc_female", "en", 22050),
     "speaches-ai/piper-en_US-hfc_male-medium": ("hfc_male", "en", 22050),
 }
@@ -95,7 +93,6 @@ class PiperModelRegistry(ModelRegistry):
 
         for model in models:
             try:
-                # Must have basic metadata
                 if model.created_at is None or getattr(model, "card_data", None) is None:
                     logger.info(
                         f"Skipping (missing created_at/card_data): {model}",
@@ -103,7 +100,6 @@ class PiperModelRegistry(ModelRegistry):
                     continue
                 assert model.card_data is not None
 
-                # Expect repo name like: piper-<lang>_<REGION>-<voice>-<quality>
                 repo_name = model.id.split("/")[-1]
                 parts = repo_name.split("-")
                 if len(parts) != 4:
@@ -112,13 +108,11 @@ class PiperModelRegistry(ModelRegistry):
 
                 _prefix, _language_and_region, name, quality = parts
 
-                # Quality must be known
                 sample_rate = PIPER_VOICE_QUALITY_SAMPLE_RATE_MAP.get(quality)  # pyright: ignore[reportArgumentType]
                 if sample_rate is None:
                     logger.info(f"Skipping (unknown quality '{quality}'): {model.id}")
                     continue
 
-                # Exactly one language required
                 languages = extract_language_list(model.card_data)
                 if not languages or len(languages) != 1:
                     logger.info("Skipping (languages parsed=%s): %s", languages, model.id)
@@ -135,7 +129,6 @@ class PiperModelRegistry(ModelRegistry):
                 )
 
             except Exception:
-                # Defensive: never let one bad model crash the whole listing
                 logger.exception(f"Skipping (unexpected error): {model.id}")
                 continue
 
@@ -170,7 +163,6 @@ class PiperModelRegistry(ModelRegistry):
                         )
                     ],
                 )
-        # Fallback: yield known models present in cache but missed by metadata filter
         for cached_repo_info in cached_model_repos_info:
             if cached_repo_info.repo_id in seen_ids:
                 continue

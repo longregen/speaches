@@ -34,13 +34,10 @@ from speaches.model_registry import (
 from speaches.tracing import traced_generator
 from speaches.utils import CudaOutOfMemoryError
 
-SAMPLE_RATE = 24000  # the default sample rate for Kokoro
+SAMPLE_RATE = 24000
 MAX_CHUNK_CHARS = 400  # conservative limit to stay well under 510 phoneme limit
 TASK_NAME_TAG = "text-to-speech"
 
-# Explicit set of known ONNX Kokoro model IDs. Using metadata-based discovery
-# (library_name, tags) is fragile because many models lack the expected model card
-# fields. This set is the source of truth for which models this executor supports.
 SUPPORTED_MODELS = {
     "speaches-ai/Kokoro-82M-v1.0-ONNX",
     "speaches-ai/Kokoro-82M-v1.0-ONNX-fp16",
@@ -176,8 +173,6 @@ class KokoroModel(Model):
     voices: list[KokoroModelVoice]
 
 
-# Dummy filter — not used for matching, only satisfies the Executor type.
-# Actual model matching is done via SUPPORTED_MODELS in list_local_models() / list_remote_models().
 hf_model_filter = HfModelFilter(task=TASK_NAME_TAG)
 
 

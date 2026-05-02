@@ -7,8 +7,6 @@ from typing import Literal
 import huggingface_hub
 from pydantic import BaseModel
 
-# each model should have: model.onnx, config.json, a README.md
-
 # https://huggingface.co/docs/datasets/en/dataset_card
 
 
@@ -37,37 +35,6 @@ class Voice(BaseModel):
     aliases: list[str]
 
 
-# Example:
-# "key": "ar_JO-kareem-low",
-# "name": "kareem",
-# "language": {
-#     "code": "ar_JO",
-#     "family": "ar",
-#     "region": "JO",
-#     "name_native": "العربية",
-#     "name_english": "Arabic",
-#     "country_english": "Jordan"
-# },
-# "quality": "low",
-# "num_speakers": 1,
-# "speaker_id_map": {},
-# "files": {
-#     "ar/ar_JO/kareem/low/ar_JO-kareem-low.onnx": {
-#         "size_bytes": 63201294,
-#         "md5_digest": "d335cd06fe4045a7ee9d8fb0712afaa9"
-#     },
-#     "ar/ar_JO/kareem/low/ar_JO-kareem-low.onnx.json": {
-#         "size_bytes": 5022,
-#         "md5_digest": "465724f7d2d5f2ff061b53acb8e7f7cc"
-#     },
-#     "ar/ar_JO/kareem/low/MODEL_CARD": {
-#         "size_bytes": 274,
-#         "md5_digest": "b6f0eaf5a7fd094be22a1bcb162173fb"
-#     }
-# },
-# "aliases": []
-
-
 def voice_to_repo(repo_path: Path, voice: Voice) -> None:
     assert len(voice.key.split("-")) == 3, (
         f"Invalid voice key: {voice.key}. Voice key should have 3 parts: <language>-<name>-<quality>"
@@ -76,7 +43,6 @@ def voice_to_repo(repo_path: Path, voice: Voice) -> None:
     language = voice.language.family
     repo_id = "speaches-ai" + "/" + "piper-" + voice.key
     model_card_data = huggingface_hub.ModelCardData(
-        # license="MIT",
         library_name="onnx",
         pipeline_tag="text-to-speech",
         tags=["speaches", "piper"],
@@ -106,7 +72,6 @@ Run this model using [speaches](https://github.com/speaches-ai/speaches)
             continue
         shutil.copy(file_path, dest_path)
 
-    # huggingface_hub.create_repo(repo_id=repo_id, exist_ok=True, private=False)
     huggingface_hub.upload_folder(
         repo_id=repo_id,
         folder_path=repo_id,

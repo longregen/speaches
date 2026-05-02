@@ -184,19 +184,6 @@ def get_speech_timestamps(
     model_id: str = MODEL_ID_V6,
     sampling_rate: int = SAMPLE_RATE,
 ) -> list[SpeechTimestamp]:
-    """This method is used for splitting long audios into speech chunks using silero VAD.
-
-    Args:
-      audio: One dimensional float array.
-      model_manager: The model manager instance for loading the VAD model.
-      model_id: The model ID to use for VAD.
-      vad_options: Options for VAD processing.
-      sampling rate: Sampling rate of the audio.
-
-    Returns:
-      List of dicts containing begin and end samples of each speech chunk.
-
-    """
     _perf_start = time.perf_counter()
 
     threshold = vad_options.threshold
@@ -224,9 +211,7 @@ def get_speech_timestamps(
         if neg_threshold is None:
             neg_threshold = max(threshold - 0.15, 0.01)
 
-        # to save potential segment end (and tolerate some silence)
         temp_end = 0
-        # to save potential segment limits in case of maximum segment size reached
         prev_end = next_start = 0
 
         for i, speech_prob in enumerate(speech_probs):
@@ -245,7 +230,6 @@ def get_speech_timestamps(
                     current_speech["end"] = prev_end
                     speeches.append(current_speech)
                     current_speech = {}
-                    # previously reached silence (< neg_thres) and is still not speech (< thres)
                     if next_start < prev_end:
                         triggered = False
                     else:
@@ -262,7 +246,6 @@ def get_speech_timestamps(
             if (speech_prob < neg_threshold) and triggered:
                 if not temp_end:
                     temp_end = window_size_samples * i
-                # condition to avoid cutting in very short silence
                 if (window_size_samples * i) - temp_end > min_silence_samples_at_max_speech:
                     prev_end = temp_end
                 if (window_size_samples * i) - temp_end < min_silence_samples:
@@ -323,8 +306,6 @@ def merge_segments(
     curr_start = segments_list[0].start
 
     for idx, seg in enumerate(segments_list):
-        # if any segment start timing is less than previous segment end timing,
-        # reset the edge padding. Similarly for end timing.
         if idx > 0:
             if seg.start < segments_list[idx - 1].end:
                 seg.start += edge_padding
@@ -344,7 +325,6 @@ def merge_segments(
             seg_idxs = []
         curr_end = seg.end
         seg_idxs.append((seg.start, seg.end))
-    # add final
     merged_segments.append(
         {
             "start": curr_start,

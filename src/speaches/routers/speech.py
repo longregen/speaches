@@ -37,17 +37,7 @@ RESPONSE_FORMAT_MIME_TYPE_MAP = {
 
 
 def response_format_to_mime_type(response_format: SpeechResponseFormat) -> str:
-    mime_type = RESPONSE_FORMAT_MIME_TYPE_MAP[response_format]
-    # Adding additional information to help client in decoding
-    # Per https://voysis.readme.io/docs/audio-guidelines
-    # NOTE: I'm not sure how widely supported these additional parameters are so for now they are commented out
-    # if response_format == "pcm":
-    #     mime_type += f";rate={audio.sample_rate}"
-    #     mime_type += ";bits=16"
-    #     mime_type += ";encoding=signed-int"
-    #     mime_type += ";channels=1"
-    #     mime_type += ";big-endian=false"
-    return mime_type
+    return RESPONSE_FORMAT_MIME_TYPE_MAP[response_format]
 
 
 class CreateSpeechRequestBody(BaseModel):
@@ -62,7 +52,7 @@ class CreateSpeechRequestBody(BaseModel):
     stream_format: Literal["audio", "sse"] = "audio"
     """The format to stream the audio in. Supported formats are sse and audio"""
     sample_rate: int | None = Field(None, ge=MIN_SPEECH_SAMPLE_RATE, le=MAX_SPEECH_SAMPLE_RATE)
-    """Desired sample rate to convert the generated audio to. If not provided, the model's default sample rate will be used."""
+    """Desired sample rate to convert the generated audio to. If not provided, the model default is used."""
 
 
 def audio_gen_to_speech_audio_events(
@@ -70,7 +60,7 @@ def audio_gen_to_speech_audio_events(
 ) -> Generator[SpeechAudioDeltaEvent | SpeechAudioDoneEvent]:
     for audio in audio_generator:
         yield SpeechAudioDeltaEvent(audio=audio.to_base64())
-    # HACK: token usage is not tracked in any way yet
+    # HACK: token usage is not tracked; hardcoded to zero
     yield SpeechAudioDoneEvent(token_usage=SpeechAudioTokenUsage(input_tokens=0, output_tokens=0, total_tokens=0))
 
 

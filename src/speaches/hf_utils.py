@@ -30,10 +30,8 @@ class HfModelFilter(BaseModel):
         if self.model_name is not None:
             if self.model_name.lower() not in model_id.lower():
                 logger.debug(f"Model ID '{model_id}' does not match filter model name '{self.model_name}'")
-                # allow partial match (case insensitive)
                 return False
 
-        # convert None to an empty set so it's easier to work with
         model_card_data_tags = set(model_card_data.tags) if model_card_data.tags is not None else set()
         if self.library_name is not None:
             # Handle both 'library_name' (correct) and 'library' (legacy/incorrect) fields
@@ -131,15 +129,6 @@ def list_local_model_ids() -> list[str]:
         return []
     model_dirs = list(cache_dir.glob("models--*"))
     return [model_id_from_path(model_dir) for model_dir in model_dirs]
-
-
-# alternative implementation that uses `huggingface_hub.scan_cache_dir`. Slightly cleaner but much slower
-# def list_local_model_ids() -> list[str]:
-#     start = time.perf_counter()
-#     hf_cache = huggingface_hub.scan_cache_dir()
-#     logger.debug(f"Scanned HuggingFace cache in {time.perf_counter() - start:.2f} seconds")
-#     hf_models = [repo for repo in list(hf_cache.repos) if repo.repo_type == "model"]
-#     return [model.repo_id for model in hf_models]
 
 
 def does_local_model_exist(model_id: str) -> bool:

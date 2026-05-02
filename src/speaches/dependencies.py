@@ -30,10 +30,8 @@ from speaches.executors.shared.registry import ExecutorRegistry
 
 logger = logging.getLogger(__name__)
 
+
 # NOTE: `get_config` is called directly instead of using sub-dependencies so that these functions could be used outside of `FastAPI`
-
-
-# https://fastapi.tiangolo.com/advanced/settings/?h=setti#creating-the-settings-only-once-with-lru_cache
 # WARN: Any new module that ends up calling this function directly (not through `FastAPI` dependency injection) should be patched in `tests/conftest.py`
 @lru_cache
 def get_config() -> Config:
@@ -112,7 +110,6 @@ def _decode_audio_ffmpeg_fallback(audio_bytes: bytes, sampling_rate: int = 16000
     return cast("np.typing.NDArray[float32]", audio_int16.astype(np.float32) / 32768.0)
 
 
-# TODO: test async vs sync performance
 def audio_file_dependency(
     file: Annotated[UploadFile, Form()],
 ) -> Audio:
@@ -209,7 +206,7 @@ CompletionClientDependency = Annotated[AsyncCompletions, Depends(get_completion_
 def get_speech_client() -> AsyncSpeech:
     config = get_config()
     if config.loopback_host_url is None:
-        # this might not work as expected if `speech_router` won't have shared state (access to the same `model_manager`) with the main FastAPI `app`. TODO: verify
+        # TODO: verify shared state — speech_router may not share model_manager with the main app
         from speaches.routers.speech import (
             router as speech_router,
         )
@@ -219,7 +216,7 @@ def get_speech_client() -> AsyncSpeech:
         http_client = AsyncClient(
             transport=ASGITransport(speech_app),
             base_url="http://test/v1",
-        )  # NOTE: "test" can be replaced with any other value
+        )
     else:
         http_client = AsyncClient(
             base_url=f"{config.loopback_host_url}/v1",
@@ -244,7 +241,7 @@ SpeechClientDependency = Annotated[AsyncSpeech, Depends(get_speech_client_async)
 def get_transcription_client() -> AsyncTranscriptions:
     config = get_config()
     if config.loopback_host_url is None:
-        # this might not work as expected if `stt_router` won't have shared state (access to the same `model_manager`) with the main FastAPI `app`. TODO: verify
+        # TODO: verify shared state — stt_router may not share model_manager with the main app
         from speaches.routers.stt import (
             router as stt_router,
         )
@@ -254,7 +251,7 @@ def get_transcription_client() -> AsyncTranscriptions:
         http_client = AsyncClient(
             transport=ASGITransport(stt_app),
             base_url="http://test/v1",
-        )  # NOTE: "test" can be replaced with any other value
+        )
     else:
         http_client = AsyncClient(
             base_url=f"{config.loopback_host_url}/v1",

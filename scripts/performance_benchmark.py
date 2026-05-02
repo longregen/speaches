@@ -13,7 +13,6 @@ from httpx import AsyncClient
 from openai import AsyncOpenAI, omit
 from openai.types.audio import SpeechCreateParams, TranscriptionCreateParams
 
-# from openai.types.audio.transcription_create_params import TranscriptionCreateParamsNonStreaming
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, computed_field
 from pydantic_settings import BaseSettings
 import soundfile as sf
@@ -101,15 +100,6 @@ class TranscriptionBenchmarkScenarioResults(BaseModel):
         )
 
 
-# class TranscriptionRequestParams(BaseModel):
-#     file: BufferedReader = Field(exclude=True)
-#     model: str
-#     language: str | None = None
-#     prompt: str | None = None
-#
-#     model_config = ConfigDict(arbitrary_types_allowed=True)
-
-
 class TranscriptionBenchmarkScenario(BaseModel):
     request_count: int
     request_concurrency: int
@@ -136,51 +126,16 @@ class VadBenchmarkScenario(BaseModel):
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
 
-# with Path("/Users/fedir/code/speaches/audio.wav").open("rb") as f:
-#     AUDIO_FILE_CONTENT = f.read()
-
 DEFAULT_SCENARIOS = [
-    # SpeechBenchmarkScenario(
-    #     request_count=2,
-    #     request_concurrency=1,
-    #     request_params=SpeechCreateParams(
-    #         model="speaches-ai/Kokoro-82M-v1.0-ONNX",
-    #         voice="af_heart",
-    #         input=INPUT_TEXT_1,
-    #     ),
-    # ),
-    # TranscriptionBenchmarkScenario(
-    #     request_count=1,
-    #     request_concurrency=1,
-    #     request_params=TranscriptionCreateParamsNonStreaming(
-    #         # file=Path("/Users/fedir/code/speaches/data/modified_test/BillGates_2010_modified.wav").open("rb"),
-    #         file=Path("/Users/fedir/code/speaches/data/modified_test/BillGates_2010_modified_2min.wav"),
-    #         # file=Path("/Users/fedir/code/speaches/audio.wav"),
-    #         # model="Systran/faster-whisper-tiny.en",
-    #         model="istupakov/parakeet-tdt-0.6b-v3-onnx",
-    #     ),
-    # ),
     VadBenchmarkScenario(
         request_count=40,
         request_concurrency=20,
         warmup_count=2,
         request_params=VadCreateParams(
-            # file=Path("/Users/fedir/code/speaches/data/modified_test/BillGates_2010_modified.wav").open("rb"),
             file=Path("/Users/fedir/code/speaches/data/modified_test/BillGates_2010_modified_2min.wav"),
-            # file=Path("/Users/fedir/code/speaches/audio.wav"),
-            # model="Systran/faster-whisper-tiny.en",
             model="silero_vad_v5",
         ),
     ),
-    # BenchmarkScenario(
-    #     request_count=2,
-    #     request_concurrency=1,
-    #     request_params=SpeechRequestParams(
-    #         model="speaches-ai/Kokoro-82M-v1.0-ONNX",
-    #         voice="af_heart",
-    #         input=INPUT_TEXT_2,
-    #     ),
-    # ),
 ]
 
 
@@ -288,13 +243,10 @@ async def vad_benchmark_runner(
 ) -> TranscriptionBenchmarkScenarioResults:
     entries: list[TranscriptionBenchmarkResultEntry] = []
 
-    # Pre-load and convert file data to PCM 16-bit
     audio_data, samplerate = sf.read(scenario.request_params["file"], dtype="int16")
 
-    # Calculate actual file duration
     file_duration_seconds = len(audio_data) / samplerate
 
-    # Convert to WAV format in memory (PCM 16-bit)
     buffer = io.BytesIO()
     sf.write(buffer, audio_data, samplerate, subtype="PCM_16", format="WAV")
     buffer.seek(0)
@@ -317,14 +269,12 @@ async def vad_benchmark_runner(
 
         entries.append(stat)
 
-    # Warmup phase
     logger.info(f"Running {scenario.warmup_count} warmup requests...")
     for _ in range(scenario.warmup_count):
         await create_vad()
     entries.clear()
     logger.info("Warmup complete, starting benchmark...")
 
-    # Actual benchmark
     create_vad_with_limited_concurrency = limit_concurrency(create_vad, scenario.request_concurrency)
 
     async with asyncio.TaskGroup() as tg:
@@ -349,7 +299,6 @@ async def transcription_benchmark_runner(
             file=scenario.request_params["file"],
             model=scenario.request_params["model"],
             language=scenario.request_params.get("language") or omit,
-            # prompt=scenario.request_params["prompt"],
         )
         end = time.perf_counter()
 
@@ -417,7 +366,7 @@ if __name__ == "__main__":
 
     config.output_directory.mkdir(parents=True, exist_ok=True)
     logging_config = {
-        "version": 1,  # required
+        "version": 1,
         "disable_existing_loggers": False,
         "formatters": {
             "simple": {"format": "%(asctime)s:%(levelname)s:%(name)s:%(funcName)s:%(lineno)d:%(message)s"},
@@ -458,6 +407,5 @@ if __name__ == "__main__":
     }
 
     logging.config.dictConfig(logging_config)
-    # logging.basicConfig(level=config.log_level.upper())
     logger = logging.getLogger(__name__)
     asyncio.run(main(config))

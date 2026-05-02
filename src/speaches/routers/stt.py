@@ -153,7 +153,6 @@ async def transcribe_file(
         Form(alias="timestamp_granularities[]"),
     ] = ["segment"],
     stream: Annotated[bool, Form()] = False,
-    # non standard parameters
     hotwords: Annotated[str | None, Form()] = None,
     without_timestamps: Annotated[bool, Form()] = True,
     vad_filter: Annotated[bool | None, Form()] = None,
@@ -186,15 +185,11 @@ async def transcribe_file(
         without_timestamps=without_timestamps,
     )
     if stream:
-        # Streaming: return the sync generator directly without asyncio.to_thread().
-        # asyncio.to_thread() would return the generator object immediately without
-        # consuming it, causing blocking __next__() calls on the event loop.
-        # Starlette's StreamingResponse handles sync generators correctly by using
-        # run_in_threadpool for each __next__() call.
+        # NOTE: return the sync generator directly without asyncio.to_thread(); to_thread() would
+        # return the generator object immediately, causing blocking __next__() calls on the event
+        # loop. Starlette's StreamingResponse handles sync generators via run_in_threadpool.
         res = transcription_executor.model_manager.handle_transcription_request(transcription_request)
     else:
-        # Non-streaming: the entire blocking computation happens in the thread
-        # and a fully-formed response is returned.
         res = await asyncio.to_thread(
             transcription_executor.model_manager.handle_transcription_request, transcription_request
         )

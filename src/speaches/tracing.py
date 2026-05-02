@@ -65,26 +65,22 @@ def traced_generator[**P, T](
 def setup_telemetry(endpoint: str, service_name: str) -> None:
     resource = Resource.create(attributes={SERVICE_NAME: service_name})
 
-    # Setup Tracing
     tracer_provider = TracerProvider(resource=resource)
     otlp_span_exporter = OTLPSpanExporter(endpoint=endpoint, insecure=True)
     span_processor = BatchSpanProcessor(otlp_span_exporter)
     tracer_provider.add_span_processor(span_processor)
     trace.set_tracer_provider(tracer_provider)
 
-    # Setup Metrics
     otlp_metric_exporter = OTLPMetricExporter(endpoint=endpoint, insecure=True)
     metric_reader = PeriodicExportingMetricReader(otlp_metric_exporter)
     meter_provider = MeterProvider(resource=resource, metric_readers=[metric_reader])
     metrics.set_meter_provider(meter_provider)
 
-    # Setup Logging
     logger_provider = LoggerProvider(resource=resource)
     otlp_log_exporter = OTLPLogExporter(endpoint=endpoint, insecure=True)
     logger_provider.add_log_record_processor(BatchLogRecordProcessor(otlp_log_exporter))
     set_logger_provider(logger_provider)
 
-    # Attach OTLP handler to root logger
     handler = LoggingHandler(level=logging.NOTSET, logger_provider=logger_provider)
     logging.getLogger().addHandler(handler)
 

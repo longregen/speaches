@@ -4,8 +4,6 @@ from pathlib import Path
 from httpx import AsyncClient
 import huggingface_hub
 
-# each model should have: model.onnx, config.json, a README.md
-
 # https://huggingface.co/docs/datasets/en/dataset_card
 
 # TODO: add details to to the README.md: dataset links, author attributions, etc.
@@ -53,7 +51,6 @@ async def create_local_model_repo(repo_id: str, model_url: str) -> None:
     )
 
     model_card_data = huggingface_hub.ModelCardData(
-        # license="MIT",
         library_name="onnx",
         pipeline_tag="text-to-speech",
         tags=["speaches", "kokoro"],  # TODO

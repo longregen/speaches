@@ -175,7 +175,6 @@ class Config(BaseSettings):
     If not set the gradio app will use the url that the user connects to the gradio app on.
     """
 
-    # TODO: document the below configuration options
     chat_completion_base_url: str = "http://localhost:11434/v1"
     chat_completion_api_key: SecretStr = SecretStr("cant-be-empty")
 
@@ -219,6 +218,16 @@ class Config(BaseSettings):
     Default speech-to-text model used for the realtime WebSocket/WebRTC API
     when no explicit transcription_model is provided by the client.
     Set via DEFAULT_REALTIME_STT_MODEL environment variable.
+    """
+
+    default_no_speech_prob_threshold: float | None = Field(default=0.6, ge=0.0, le=1.0)
+    """
+    Default Whisper no-speech probability threshold used as a second-stage gate
+    after VAD in the realtime API. If the average no_speech_prob across a
+    transcription's segments exceeds this value, the turn is dropped before any
+    conversation item or TTS response is created. Clients can override this
+    per-session at runtime via session.update. Set to None to disable the gate
+    by default. Set via DEFAULT_NO_SPEECH_PROB_THRESHOLD environment variable.
     """
 
     qwen3_tts_default_voice: str = "Ryan"

@@ -267,13 +267,10 @@ class ExecutorRegistry:
         return None
 
     def resolve_tts_model_manager(self, model_id: str) -> SpeechHandler:
-        # Fast path: cache hit (no lock needed for dict reads in CPython)
         cached = self._tts_cache.get(model_id)
         if cached is not None:
             return cached
-        # Slow path: resolve and populate cache under lock
         with self._tts_resolve_lock:
-            # Double-check after acquiring lock
             cached = self._tts_cache.get(model_id)
             if cached is not None:
                 return cached
@@ -291,13 +288,10 @@ class ExecutorRegistry:
             raise ValueError(f"No TTS executor found for model '{model_id}'")
 
     def resolve_stt_model_manager(self, model_id: str) -> TranscriptionHandler:
-        # Fast path: cache hit (no lock needed for dict reads in CPython)
         cached = self._stt_cache.get(model_id)
         if cached is not None:
             return cached
-        # Slow path: resolve and populate cache under lock
         with self._stt_resolve_lock:
-            # Double-check after acquiring lock
             cached = self._stt_cache.get(model_id)
             if cached is not None:
                 return cached
@@ -314,10 +308,6 @@ class ExecutorRegistry:
                     return executor.model_manager
             raise ValueError(f"No STT executor found for model '{model_id}'")
 
-    # Pinned models are held via ExitStack to keep a reference alive,
-    # bypassing the TTL-based eviction in the model manager. The model
-    # manager's own cache may independently load/evict the same model;
-    # the ExitStack ref prevents the underlying resource from being freed.
     async def warmup_model(self, model_id: str) -> None:
         if model_id in self._pinned_model_ids:
             return
@@ -404,7 +394,6 @@ class ExecutorRegistry:
                     disposable = await asyncio.to_thread(executor.model_manager.load_model, model.id)
                     loaded = self._exit_stack.enter_context(disposable)
                 except (ImportError, RuntimeError):
-                    # Optional dependency not installed or unavailable on this Python version
                     logger.warning(f"Auto-warmup: skipping '{model.id}' (missing optional dependency)")
                     continue
                 self._pinned_models.append(loaded)

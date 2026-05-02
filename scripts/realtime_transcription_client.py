@@ -98,13 +98,11 @@ async def main() -> None:
                 tg.create_task(print_events(conn, final_event=None))
                 await conn.session.update(
                     session=Session(
-                        input_audio_transcription=SessionInputAudioTranscription(
-                            model=TRANSCRIPTION_MODEL  # controls the transcription model used
-                        ),
+                        input_audio_transcription=SessionInputAudioTranscription(model=TRANSCRIPTION_MODEL),
                         turn_detection=SessionTurnDetection(
                             silence_duration_ms=1500,  # Shouldn't exceed 2500 due to how the current implementation works.
-                            threshold=0.9,  # I've found this to be a good default value.
-                            create_response=False,  # Ensures that the session is only used for audio transcription.
+                            threshold=0.9,
+                            create_response=False,
                         ),
                     )
                 )

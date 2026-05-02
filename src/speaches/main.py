@@ -187,7 +187,6 @@ def create_app() -> FastAPI:
 
     logger.debug(f"Config: {config}")
 
-    # Initialize OpenTelemetry if endpoint is configured
     if config.otel_exporter_otlp_endpoint:
         from speaches.tracing import setup_telemetry
 
@@ -216,7 +215,6 @@ def create_app() -> FastAPI:
         except ImportError:
             logger.warning("Failed to instrument logging (package version mismatch)")
 
-    # Create main app WITHOUT global authentication
     app = FastAPI(
         title="Speaches",
         version="0.8.3",  # TODO: update this on release
@@ -225,7 +223,6 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
 
-    # Instrument FastAPI app if telemetry is enabled
     if config.otel_exporter_otlp_endpoint:
         try:
             from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
@@ -234,7 +231,6 @@ def create_app() -> FastAPI:
         except ImportError:
             logger.warning("Failed to instrument FastAPI (package version mismatch)")
 
-    # Register global exception handler for APIProxyError
     @app.exception_handler(APIProxyError)
     async def _api_proxy_error_handler(_request: Request, exc: APIProxyError) -> JSONResponse:
         error_id = str(uuid.uuid4())
@@ -276,10 +272,8 @@ def create_app() -> FastAPI:
             content={"detail": "Internal server error"},
         )
 
-    # Public routers WITHOUT authentication
     app.include_router(misc_public_router)
 
-    # HTTP routers WITH authentication (if API key is configured)
     http_dependencies = []
     if config.api_key is not None:
         http_dependencies.append(ApiKeyDependency)
@@ -294,7 +288,6 @@ def create_app() -> FastAPI:
     app.include_router(vad_router, dependencies=http_dependencies)
     app.include_router(diarization_router, dependencies=http_dependencies)
 
-    # WebSocket router WITHOUT authentication (handles its own)
     app.include_router(realtime_ws_router)
 
     # Inspector — HTTP + WebSocket. Auth on HTTP via http_dependencies; WS verifies itself.

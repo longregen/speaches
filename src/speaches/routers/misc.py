@@ -48,7 +48,6 @@ def get_running_models(executor_registry: ExecutorRegistryDependency) -> Running
     },
 )
 def load_model_route(executor_registry: ExecutorRegistryDependency, model_id: ModelId) -> JSONResponse:
-    # Check if model is already loaded
     for executor in executor_registry.all_executors():
         if model_id in executor.model_manager.loaded_models:
             return JSONResponse(

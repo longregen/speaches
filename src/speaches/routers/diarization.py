@@ -58,7 +58,6 @@ def _map_to_known_speakers(
     inference = Inference(pipeline._embedding, window="whole")  # noqa: SLF001
     main_audio = {"waveform": waveform, "sample_rate": sample_rate}
 
-    # Compute embeddings for reference speakers
     known_embeddings: dict[str, np.ndarray] = {}
     for ks in known_speakers:
         ref_waveform = _torch.from_numpy(ks.audio.data).unsqueeze(0).float()
@@ -66,7 +65,6 @@ def _map_to_known_speakers(
             inference({"waveform": ref_waveform, "sample_rate": ks.audio.sample_rate})
         )
 
-    # Collect embeddings per diarized speaker across all their turns
     speaker_embeddings: dict[str, list[np.ndarray]] = {}
     speaker_track_gen = diarization.speaker_diarization.itertracks(yield_label=True)
     speaker_track_gen = cast("Iterator[tuple[Segment, TrackName, Hashable]]", speaker_track_gen)
@@ -79,7 +77,6 @@ def _map_to_known_speakers(
 
     avg_embeddings = {spk: np.mean(embs, axis=0) for spk, embs in speaker_embeddings.items() if embs}
 
-    # Match each diarized speaker to the most similar known speaker via cosine similarity
     mapping: dict[Hashable, str] = {}
     for diarized_spk, diarized_emb in avg_embeddings.items():
         best_name = diarized_spk

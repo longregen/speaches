@@ -99,7 +99,6 @@ def build_clip_timestamps(
 logger = logging.getLogger(__name__)
 tracer = trace.get_tracer(__name__)
 
-# Known whisper models — used as fallback if model card metadata is missing/broken.
 KNOWN_MODELS: dict[str, list[str]] = {
     "Systran/faster-whisper-large-v3": ["multilingual"],
     "Systran/faster-whisper-large-v3-turbo": ["multilingual"],
@@ -156,7 +155,6 @@ class WhisperModelRegistry(ModelRegistry[Model, WhisperModelFiles]):
                     language=extract_language_list(model_card_data) if model_card_data else [],
                     task=TASK_NAME_TAG,
                 )
-        # Fallback: yield known models present in cache but missed by metadata filter
         for cached_repo_info in cached_model_repos_info:
             if cached_repo_info.repo_id in seen_ids:
                 continue
@@ -173,7 +171,6 @@ class WhisperModelRegistry(ModelRegistry[Model, WhisperModelFiles]):
     def get_model_files(self, model_id: str) -> WhisperModelFiles:
         model_files = list(list_model_files(model_id))
 
-        # the necessary files are specified in `faster_whisper.transcribe`
         model_file_path = next(file_path for file_path in model_files if file_path.name == "model.bin")
         config_file_path = next(
             file_path for file_path in model_files if file_path.name == "config.json"
@@ -190,7 +187,6 @@ class WhisperModelRegistry(ModelRegistry[Model, WhisperModelFiles]):
         )
 
     def download_model_files(self, model_id: str) -> None:
-        # Taken from faster_whisper/utils.py
         allow_patterns = [
             "config.json",
             "preprocessor_config.json",
@@ -274,7 +270,6 @@ class WhisperModelManager(BaseModelManager[BatchedInferencePipeline]):
         timelog_start = time.perf_counter()
         with self._inference_semaphore, self.load_model(request.model) as whisper_model:
             clip_timestamps = build_clip_timestamps(request.speech_segments, request.vad_options)
-            # Streaming cannot retry mid-stream, so use batch_size=1 for safety
             try:
                 segments, _transcription_info = whisper_model.transcribe(
                     request.audio.data,

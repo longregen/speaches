@@ -80,7 +80,6 @@ class PocketTTSModel(Model):
     voices: list[PocketTTSModelVoice]
 
 
-# Known pocket-tts models — fallback if model card metadata is missing/broken.
 KNOWN_MODELS: dict[str, list[str]] = {
     "kyutai/pocket-tts-without-voice-cloning": ["en", "fr", "es", "de", "it", "pt", "zh", "ja", "ko"],
 }
@@ -142,7 +141,6 @@ class PocketTTSModelRegistry(ModelRegistry):
                 )
 
     def get_model_files(self, model_id: str) -> None:
-        # Verify the model weights are locally cached by attempting a local-only download
         huggingface_hub.hf_hub_download(
             repo_id=model_id,
             filename="tts_b6369a24.safetensors",
@@ -190,8 +188,6 @@ if POCKET_TTS_AVAILABLE:
                 return
 
             with self._inference_lock, self.load_model(request.model) as tts:
-                # TTSModel methods are decorated with @torch.inference_mode(),
-                # which masks their real signature from type checkers.
                 tts_any = cast("Any", tts)
                 voice_state = tts_any.get_state_for_audio_prompt(request.voice)
                 start = time.perf_counter()

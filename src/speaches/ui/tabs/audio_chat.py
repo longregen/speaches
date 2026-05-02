@@ -54,7 +54,6 @@ class VoiceChatState(BaseModel):
 def gradio_message_to_openai_message(gradio_message: GradioMessage) -> ChatCompletionMessageParam:
     content: list[ChatCompletionContentPartParam] = []
 
-    # openai_messages: list[ChatCompletionMessageParam] = []
     if len(gradio_message["text"]) > 0:
         content.append(ChatCompletionContentPartTextParam(text=gradio_message["text"], type="text"))
 
@@ -146,8 +145,6 @@ async def create_text_audio_stream_reply(
         transcript = audio_dict.get("transcript")
         audio_data = audio_dict.get("data")
         assert transcript is None or audio_data is None, "Assumption violated: transcript XOR audio_data"
-        # NOTE: not a valid assumption but I want to keep it as a reference
-        # assert transcript is not None or audio_data is not None, "Assumption violated: transcript OR audio_data"
 
         if transcript is not None:
             assert isinstance(transcript, str)
@@ -179,25 +176,6 @@ async def create_text_audio_stream_reply(
     )
 
 
-# NOTE: another option would have been to use `gr.load_chat` but I couldn't get it to work. Worth trying again in the future.
-# gr.load_chat(
-#     "https://api.openai.com/v1",
-#     token="sk-xxx",
-#     # model="gpt-4o",
-#     model="gpt-4o-audio-preview",
-#     multimodal=True,
-#     # type="messages",
-#     # textbox=gr.MultimodalTextbox(),
-#     textbox=gr.MultimodalTextbox(
-#         interactive=True,
-#         file_count="multiple",
-#         placeholder="Enter message or upload file...",
-#         show_label=False,
-#         sources=["microphone", "upload"],
-#     ),
-# )
-
-
 def create_audio_chat_tab(config: Config, api_key_input: gr.Textbox) -> None:
     async def create_reply(
         message: GradioMessage,
@@ -209,7 +187,6 @@ def create_audio_chat_tab(config: Config, api_key_input: gr.Textbox) -> None:
         request: gr.Request,
     ) -> AsyncGenerator[list[gr.ChatMessage] | gr.ChatMessage]:
         openai_client = openai_client_from_gradio_req(request, config, api_key or None)
-        # openai_client = AsyncOpenAI(base_url="https://api.openai.com/v1")  # HACK: for easier testing
 
         state.openai_messages.append(gradio_message_to_openai_message(message))
 
@@ -230,7 +207,7 @@ def create_audio_chat_tab(config: Config, api_key_input: gr.Textbox) -> None:
             modalities=modalities,
             audio=audio,
             stream=stream,
-            n=1,  # explicitely set to 1 as multiple choices are not supported
+            n=1,
         )
 
         if isinstance(chat_completion, ChatCompletion) and "audio" not in modalities:
@@ -247,7 +224,7 @@ def create_audio_chat_tab(config: Config, api_key_input: gr.Textbox) -> None:
             raise ValueError(f"Unsupported response type: {type(chat_completion)}")
 
     async def update_chat_model_dropdown() -> gr.Dropdown:
-        # NOTE: not using `openai_client_from_gradio_req` because we aren't intrested in making API calls to `speaches` but rather to whatever the user specified as LLM api
+        # NOTE: not using `openai_client_from_gradio_req` because this targets the external LLM API, not the local speaches service.
         openai_client = AsyncOpenAI(
             base_url=config.chat_completion_base_url,
             api_key=config.chat_completion_api_key.get_secret_value(),
@@ -278,7 +255,6 @@ def create_audio_chat_tab(config: Config, api_key_input: gr.Textbox) -> None:
                 file_count="multiple",  # TODO: verify if this works
                 placeholder="Enter message or upload file...",
                 sources=["microphone", "upload"],
-                # value="Count from 1 to 5",  # HACK: for easier testing
             ),
             additional_inputs=[chat_model_dropdown, stream_checkbox, state, api_key_input],
         )

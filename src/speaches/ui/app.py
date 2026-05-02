@@ -56,7 +56,6 @@ def create_gradio_demo(config: Config) -> gr.Blocks:
             with gr.Column(scale=1, min_width=120):
                 show_api_key_btn = gr.Button("Show Key", size="sm", elem_id="show_api_key_btn")
 
-        # Add JavaScript for persistence and visibility toggle
         demo.load(
             None,
             None,
