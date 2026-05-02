@@ -1,6 +1,5 @@
 (function () {
   const DEV = !!window.INSPECT_DEV_MODE;
-  // Real mode lane metadata + palettes, reused when dev data.js is absent.
   const LANES_DEFAULT = [
     { id: 'error',       name: 'Error',       hint: 'mirrored from any lane' },
     { id: 'audio_level', name: 'Audio',       hint: 'PCM RMS · 40ms/window' },
@@ -10,6 +9,7 @@
     { id: 'bargein',     name: 'Barge-in',    hint: 'pending / fired / cancelled / missed' },
     { id: 'llm',         name: 'LLM',         hint: 'model' },
     { id: 'response',    name: 'Response',    hint: 'plan · phrase split' },
+    { id: 'tool',        name: 'Tool',        hint: 'use_token · result · summary' },
     { id: 'tts_req',     name: 'TTS phrases', hint: 'tts executor' },
     { id: 'tts_chunk',   name: 'TTS chunks',  hint: '24 kHz PCM' },
     { id: 'wire',        name: 'Wire',        hint: 'protocol control' },
@@ -18,19 +18,19 @@
     warm: {
       audio_level: '#6E7C7F', vad: '#7A92A8', stt: '#7F9B7F',
       turn: '#9F7E9B', llm: '#A8906A',
-      response: '#C89B6A', tts_req: '#C4A45A', tts_chunk: '#B88B5A',
+      response: '#C89B6A', tool: '#9CA88A', tts_req: '#C4A45A', tts_chunk: '#B88B5A',
       wire: '#9B9590', error: '#B88080',
     },
     semantic: {
       audio_level: '#6BBED3', vad: '#6FA8DC', stt: '#6BBE7F',
       turn: '#C77BBA', llm: '#C8A2E8',
-      response: '#E8A96B', tts_req: '#E8A96B', tts_chunk: '#E8C76B',
+      response: '#E8A96B', tool: '#88C9A1', tts_req: '#E8A96B', tts_chunk: '#E8C76B',
       wire: '#9B9590', error: '#E87878',
     },
     mono: {
       audio_level: '#5A564F', vad: '#8D7A5A', stt: '#A8906A',
       turn: '#8E7958', llm: '#C8B08E',
-      response: '#DEC49B', tts_req: '#DEC49B', tts_chunk: '#BC9C6E',
+      response: '#DEC49B', tool: '#A8B091', tts_req: '#DEC49B', tts_chunk: '#BC9C6E',
       wire: '#726B62', error: '#B88080',
     },
   };
@@ -53,10 +53,9 @@
   tl.palette = TWEAKS.palette;
   document.documentElement.dataset.density = TWEAKS.density;
 
-  // ---- Session loading (real WS) + dev scenario fallback ------------------
   let currentSid = null;
   let currentWs = null;
-  let sessionStartWallMs = 0; // inspector-local anchor: first event's ts_wall (seconds)
+  let sessionStartWallMs = 0;
 
   function stripScheme(u) { return u.replace(/^https?:\/\//, ''); }
   const wsScheme = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -85,8 +84,6 @@
   }
 
   function normalizeEvent(raw) {
-    // Translate server event (ts_wall in seconds, no `t`) into the Timeline's shape.
-    // We anchor t=0 at the first event's ts_wall so ranges look sane.
     if (sessionStartWallMs === 0 && raw.ts_wall) sessionStartWallMs = raw.ts_wall * 1000;
     const t_ms = raw.ts_wall ? (raw.ts_wall * 1000 - sessionStartWallMs) : 0;
     const ev = Object.assign({}, raw, { t: t_ms });
@@ -96,8 +93,14 @@
 
   async function fetchSessions() {
     const [live, hist] = await Promise.all([
-      fetch('/v1/inspect/sessions').then(r => r.ok ? r.json() : []).catch(() => []),
-      fetch('/v1/inspect/sessions/history').then(r => r.ok ? r.json() : []).catch(() => []),
+      fetch('/v1/inspect/sessions').then(r => r.ok ? r.json() : []).catch(err => {
+        console.error('[inspector] fetch /v1/inspect/sessions failed:', err);
+        return [];
+      }),
+      fetch('/v1/inspect/sessions/history').then(r => r.ok ? r.json() : []).catch(err => {
+        console.error('[inspector] fetch /v1/inspect/sessions/history failed:', err);
+        return [];
+      }),
     ]);
     return { live, hist };
   }
@@ -125,14 +128,17 @@
         try {
           const raw = JSON.parse(line);
           tl.appendEvent(normalizeEvent(raw));
-        } catch (_) {}
+        } catch (err) {
+          console.error('[inspector] failed to parse event line:', err, line);
+        }
       }
-      updateStatus();
+      scheduleStatus();
     };
     ws.onclose = () => {
       if (currentWs === ws) setState('replay');
     };
-    ws.onerror = () => {
+    ws.onerror = (ev) => {
+      console.error('[inspector] event-stream WebSocket error:', ev);
       if (currentWs === ws) setState('replay');
     };
   }
@@ -159,16 +165,19 @@
     refreshLiveButton();
   }
 
-  // Hard errors — mirror to the error lane and count in the top-bar badge.
-  // `cancelled` (barge-in), `rejected_noise`, `rejected_empty` render with a warn color
-  // on their own lane but are NOT errors.
+  // Hard errors -> error lane + top-bar badge. `cancelled`/`rejected_*` are warnings, not errors.
   const ERR_KINDS = new Set(['error','raised','dropped','failed','phrase_error','bargein_missed']);
+  let _statusScheduled = false;
+  function scheduleStatus() {
+    if (_statusScheduled) return;
+    _statusScheduled = true;
+    requestAnimationFrame(() => { _statusScheduled = false; updateStatus(); });
+  }
   function updateStatus() {
     $('#stEvents').textContent = tl.events.length;
     $('#stSeq').textContent = tl.events.length ? tl.events[tl.events.length - 1].seq : '—';
     const errors = tl.events.filter(e => e.lane === 'error' || ERR_KINDS.has(e.kind));
     $('#stDropped').textContent = errors.length;
-    // Top-bar error badge
     let badge = document.getElementById('errorBadge');
     if (errors.length) {
       if (!badge) {
@@ -191,7 +200,6 @@
     } else if (badge) {
       badge.style.display = 'none';
     }
-    // Turn index indicator
     const ends = turnEnds();
     if (ends.length) {
       const center = tl.view.t0 + (tl._tlPxWidth() / tl.view.pxPerMs) / 2;
@@ -205,7 +213,6 @@
   }
   tl.onViewChange = updateStatus;
 
-  // ---- Interaction ---------------------------------------------------------
   const wrap = $('#tlWrap');
   wrap.addEventListener('wheel', (e) => {
     e.preventDefault();
@@ -229,18 +236,15 @@
     const py = e.clientY - rect.top;
     const hit = tl.hitTest(px, py);
     if (hit) {
-      // Plain click on an event: pick it, and clear any lingering selection band
-      // so space/r don't replay a stale region.
-      if (tl.replayRange && !replay.active) {
-        tl.replayRange = null;
+      if (tl.playbackRange && !playback.active) {
+        tl.playbackRange = null;
         tl.draw();
       }
       selectEvent(hit);
       return;
     }
-    // Plain click on empty timeline: clear selection band too, and start panning.
-    if (tl.replayRange && !replay.active) {
-      tl.replayRange = null;
+    if (tl.playbackRange && !playback.active) {
+      tl.playbackRange = null;
       tl.draw();
     }
     dragging = true; dragLast = e.clientX;
@@ -302,7 +306,7 @@
       if (e.key === 'Escape') e.target.blur();
       return;
     }
-    // Turn navigation: Ctrl+,/. (works with US and non-US keyboards, avoids Ctrl+<>)
+    // Ctrl+,/. turn navigation (accepts both key layouts).
     if (e.ctrlKey && (e.key === ',' || e.key === '<')) { jumpTurn(-1); e.preventDefault(); return; }
     if (e.ctrlKey && (e.key === '.' || e.key === '>')) { jumpTurn(1);  e.preventDefault(); return; }
 
@@ -322,18 +326,17 @@
     $('#btnPause').setAttribute('aria-pressed', tl.paused ? 'true' : 'false');
     setState(tl.paused ? 'paused' : (currentWs && currentWs.readyState === 1 ? 'live' : 'replay'));
   }
-  // Follow == Live. Only enabled when the session is alive (open WebSocket).
   function isSessionAlive() {
     return !!(currentWs && currentWs.readyState === 1);
   }
   function toggleFollow() {
-    // Turning off is always fine; turning on requires an active live session.
+    // Turning Follow on requires a live session; turning off always works.
     if (!tl.followTail && !isSessionAlive()) return;
     const live = !tl.followTail;
     tl.followTail = live;
     $('#btnFollow').setAttribute('aria-pressed', live ? 'true' : 'false');
     if (live) {
-      if (replay.active) stopReplay();
+      if (playback.active) stopPlayback();
       tl.toEnd();
     }
     updateStatus();
@@ -346,28 +349,24 @@
     btn.style.opacity = btn.disabled ? '0.5' : '';
     btn.style.cursor = btn.disabled ? 'not-allowed' : '';
   }
-  // Space semantics:
-  //   - In Live (followTail=true): exit Live → Replay, stop any playback.
-  //   - In Replay + playing: stop playback (stay in Replay).
-  //   - In Replay + idle: start playback from the anchor (selected event if any,
-  //     otherwise the hover cursor line).
+  // Space: Live -> Replay (stop playback); Replay+playing -> stop; Replay+idle -> play from selected/cursor.
   function handleSpace() {
     if (tl.followTail) {
       tl.followTail = false;
       $('#btnFollow').setAttribute('aria-pressed', 'false');
-      if (replay.active) stopReplay();
+      if (playback.active) stopPlayback();
       updateStatus();
       return;
     }
-    if (replay.active) {
-      stopReplay();
+    if (playback.active) {
+      stopPlayback();
       return;
     }
     if (!tl.events.length) return;
     const anchor = tl.selected ? tl.selected.t : tl.cursorMs;
     if (anchor == null) return;
     const lastT = tl.events[tl.events.length - 1].t;
-    startReplay('live', { t0: Math.max(0, anchor), t1: lastT });
+    startPlayback('live', { t0: Math.max(0, anchor), t1: lastT });
   }
   $('#btnPause').addEventListener('click', togglePause);
   $('#btnFollow').addEventListener('click', toggleFollow);
@@ -397,7 +396,6 @@
   });
   window.addEventListener('mouseup', () => { mmDragging = false; });
 
-  // Lane gutter — single click toggles hide; double-click jumps to next event in that lane.
   const HIDDEN_KEY = 'inspect.hiddenLanes';
   function loadHidden() {
     try { return new Set(JSON.parse(localStorage.getItem(HIDDEN_KEY) || '[]')); } catch (_) { return new Set(); }
@@ -419,7 +417,6 @@
     });
     tl.draw();
   }
-  // Apply persisted state shortly after the gutter is rendered.
   setTimeout(applyHidden, 50);
 
   $('#laneGutter').addEventListener('click', (e) => {
@@ -435,7 +432,7 @@
     const lbl = e.target.closest('.lane-label');
     if (!lbl) return;
     const laneId = lbl.dataset.lane;
-    tl.hiddenLanes.delete(laneId); // un-hide on dblclick-jump
+    tl.hiddenLanes.delete(laneId);
     saveHidden(tl.hiddenLanes);
     applyHidden();
     const centerMs = tl.view.t0 + (tl._tlPxWidth() / tl.view.pxPerMs) / 2;
@@ -443,7 +440,6 @@
     if (next) selectEvent(next);
   });
 
-  // ---- Inspector panel ----------------------------------------------------
   const LANE_META = {};
   D.LANES.forEach(L => LANE_META[L.id] = { name: L.name });
   LANE_META.error = { name: 'Error' };
@@ -501,7 +497,6 @@
     return tl.events.filter(x => {
       if (x.seq === e.seq) return false;
       const xc = x.corr || {};
-      // Match on any shared correlation ref
       return (c.phrase_id && xc.phrase_id === c.phrase_id)
           || (c.response_id && xc.response_id === c.response_id)
           || (c.item_id && xc.item_id === c.item_id)
@@ -669,8 +664,6 @@
     setTimeout(() => btn.textContent = prev, 900);
   });
 
-  // Export ndjson: prefer the on-disk file (full fidelity) if it exists,
-  // fall back to re-serializing the in-memory events.
   async function downloadBlob(url, filename) {
     const a = document.createElement('a');
     a.href = url;
@@ -688,7 +681,6 @@
     btn.textContent = '⤓ …';
     try {
       if (currentSid) {
-        // Try the server file first (most faithful).
         const res = await fetch(`/v1/inspect/sessions/history/${encodeURIComponent(currentSid)}`, { cache: 'no-store' });
         if (res.ok) {
           const blob = await res.blob();
@@ -698,7 +690,6 @@
           return;
         }
       }
-      // Fallback: serialize what we have in memory.
       const body = tl.events.map(e => JSON.stringify(stripHelpers(e))).join('\n') + '\n';
       const blob = new Blob([body], { type: 'application/x-ndjson' });
       const name = currentSid ? `${currentSid}.ndjson` : `inspector-${Date.now()}.ndjson`;
@@ -720,7 +711,7 @@
         const res = await fetch(`/v1/inspect/sessions/${encodeURIComponent(currentSid)}/audio?channel=${ch}&from_ms=0&to_ms=0`, { cache: 'no-store' });
         if (!res.ok) continue;
         const blob = await res.blob();
-        if (blob.size <= 44) continue;  // empty WAV header only
+        if (blob.size <= 44) continue;
         downloadBlob(URL.createObjectURL(blob), `${currentSid}.${ch}.wav`);
       }
       btn.textContent = '⤓ done';
@@ -742,7 +733,6 @@
     });
   });
 
-  // ---- Tooltip ------------------------------------------------------------
   const tt = $('#tooltip');
   function showTooltip(e, mx, my) {
     const laneColor = D.PALETTES[tl.palette][e.lane] || '#999';
@@ -773,6 +763,18 @@
       }
       if (phrases.length) rows.push(['phrases', shorten(phrases.map((t,i) => `${i+1}. ${t}`).join('\n'), 600)]);
     }
+    if (e.lane === 'stt' && e.kind === 'backfill') {
+      rows.push(['backfill', p.text || '']);
+      rows.push(['item', p.item_id || '']);
+    }
+    if (e.lane === 'turn' && e.kind === 'bargein_context') {
+      if (p.heard) rows.push(['heard', shorten(p.heard, 300)]);
+      if (p.unheard) rows.push(['unheard', shorten(p.unheard, 300)]);
+    }
+    if (e.lane === 'bargein') {
+      if (p.delay_ms != null) rows.push(['delay', p.delay_ms + 'ms']);
+      if (p.reason) rows.push(['reason', p.reason]);
+    }
     if (p.model) rows.push(['model', p.model]);
     if (p.bytes != null) rows.push(['bytes', p.bytes]);
     if (p.event_type) rows.push(['event', p.event_type]);
@@ -784,6 +786,14 @@
     if (p.ms_audio != null) rows.push(['ms_audio', p.ms_audio]);
     if (p.reason) rows.push(['reason', p.reason]);
     if (p.error) rows.push(['error', shorten(p.error, 600)]);
+    if (p.avg_no_speech_prob != null) {
+      const parts = [`avg ${p.avg_no_speech_prob}`];
+      if (p.min_no_speech_prob != null) parts.push(`min ${p.min_no_speech_prob}`);
+      if (p.max_no_speech_prob != null) parts.push(`max ${p.max_no_speech_prob}`);
+      if (p.no_speech_prob_threshold != null) parts.push(`thr ${p.no_speech_prob_threshold}`);
+      else if (p.threshold != null) parts.push(`thr ${p.threshold}`);
+      rows.push(['no_speech', parts.join(' · ')]);
+    }
 
     const c = e.corr || {};
     if (c.phrase_id) rows.push(['phrase', aliasFor('phrase', c.phrase_id)]);
@@ -814,7 +824,6 @@
   function hideTooltip() { tt.style.display = 'none'; }
   function shorten(s, n) { s = String(s); return s.length > n ? s.slice(0, n) + '…' : s; }
 
-  // ---- Tweaks --------------------------------------------------------------
   const tweakPanel = $('#tweakPanel');
   const fab = $('#tweakFab');
   $('#tweakClose').addEventListener('click', () => tweakPanel.classList.remove('open'));
@@ -892,22 +901,16 @@
     });
   });
 
-  // ---- Replay engine -------------------------------------------------------
-  // Two modes:
-  //   (a) Windowed replay (press `r`): sweep from selected.t - pre to selected.t + post, then stop.
-  //   (b) Live replay (Shift+R):       sweep from current playhead to end-of-session; behaves like Follow.
-  // Both share a single rAF loop that advances tl.playheadMs and calls draw().
-  // Audio playback is stubbed (no media in mock); we surface which TTS phrase
-  // *would* be audible right now, respecting the user-adjustable audio offset.
-
-  const replay = {
+  // Replay: windowed (`r`) sweeps selected.t - pre to selected.t + post; live (Shift+R) sweeps to end.
+  // Both drive tl.playheadMs via rAF and kick off audio playback.
+  const playback = {
     active: false,
-    mode: null,          // 'window' | 'live'
+    mode: null,
     startWall: 0,
     startMs: 0,
     endMs: 0,
     speed: 1,
-    scrubbing: false,    // user dragging playhead
+    scrubbing: false,
     channels: { mic: true, tts: true },
     rafId: null,
   };
@@ -916,8 +919,8 @@
   function currentPre()   { return parseInt(TWEAKS.replayPre  || '500', 10); }
   function currentPost()  { return parseInt(TWEAKS.replayPost || '1000', 10); }
 
-  function startReplay(mode, opts) {
-    stopReplay(false);
+  function startPlayback(mode, opts) {
+    stopPlayback(false);
     if (!tl.events.length) return;
     const lastT = tl.events[tl.events.length - 1].t;
 
@@ -936,13 +939,13 @@
     }
     if (t1 <= t0) return;
 
-    replay.active = true;
-    replay.mode = mode;
-    replay.startWall = performance.now();
-    replay.startMs = t0;
-    replay.endMs = t1;
-    replay.speed = currentSpeed();
-    tl.replayRange = { t0, t1 };
+    playback.active = true;
+    playback.mode = mode;
+    playback.startWall = performance.now();
+    playback.startMs = t0;
+    playback.endMs = t1;
+    playback.speed = currentSpeed();
+    tl.playbackRange = { t0, t1 };
     tl.playheadMs = t0;
     tl.paused = false;
     setState('replay');
@@ -950,11 +953,9 @@
     $('#btnReplayStop').style.display = '';
     $('#audioChannelsWrap').style.display = '';
 
-    // Kick off real audio playback for the chosen range (best-effort).
     const _end = mode === 'live' ? 0 : Math.max(t0 + 100, t1);
-    // Anchor = the selected event if it sits inside the replay range, else none.
     const anchor = (tl.selected && tl.selected.t >= t0 && tl.selected.t <= t1) ? tl.selected : null;
-    startPlayback(t0 | 0, _end | 0, anchor).catch(() => {});
+    startAudioSources(t0 | 0, _end | 0, anchor).catch(err => console.error('[inspector] startAudioSources failed:', err));
 
     if (mode === 'window') {
       const spanMs = tl._tlPxWidth() / tl.view.pxPerMs;
@@ -967,34 +968,34 @@
     }
 
     const tick = () => {
-      if (!replay.active) return;
-      if (!replay.scrubbing) {
-        const elapsed = (performance.now() - replay.startWall) * replay.speed;
-        tl.playheadMs = replay.startMs + elapsed;
+      if (!playback.active) return;
+      if (!playback.scrubbing) {
+        const elapsed = (performance.now() - playback.startWall) * playback.speed;
+        tl.playheadMs = playback.startMs + elapsed;
       }
       const ph = tl.playheadMs;
-      if (replay.mode === 'live' && !replay.scrubbing) {
+      if (playback.mode === 'live' && !playback.scrubbing) {
         const spanMs = tl._tlPxWidth() / tl.view.pxPerMs;
         tl.view.t0 = Math.max(0, ph - spanMs * 0.4);
       }
       updateAudioIndicator(ph);
       tl.draw();
       updateStatus();
-      if (!replay.scrubbing && ph >= replay.endMs) { stopReplay(true); return; }
-      replay.rafId = requestAnimationFrame(tick);
+      if (!playback.scrubbing && ph >= playback.endMs) { stopPlayback(true); return; }
+      playback.rafId = requestAnimationFrame(tick);
     };
-    replay.rafId = requestAnimationFrame(tick);
+    playback.rafId = requestAnimationFrame(tick);
   }
 
-  function stopReplay() {
-    if (replay.rafId) cancelAnimationFrame(replay.rafId);
-    replay.rafId = null;
-    const wasActive = replay.active;
-    replay.active = false;
-    replay.mode = null;
+  function stopPlayback() {
+    if (playback.rafId) cancelAnimationFrame(playback.rafId);
+    playback.rafId = null;
+    const wasActive = playback.active;
+    playback.active = false;
+    playback.mode = null;
     tl.playheadMs = null;
-    tl.replayRange = null;
-    stopPlayback();
+    tl.playbackRange = null;
+    stopAudioSources();
     $('#btnReplayStop').style.display = 'none';
     $('#audioChannelsWrap').style.display = 'none';
     $('#stAudio').textContent = 'audio ○ idle';
@@ -1002,15 +1003,11 @@
     if (wasActive) { setState(currentWs && currentWs.readyState === 1 ? 'live' : 'replay'); tl.draw(); }
   }
 
-  // ---- Audio playback (Web Audio API) ------------------------------------
-  // When a session id is available, we pre-fetch mic_in + tts_out PCM for the
-  // replay range and schedule them on two AudioBufferSourceNodes with separate
-  // GainNodes so channel mute / speed changes flow through.
   let _actx = null;
   function getActx() {
     if (!_actx) {
       try { _actx = new (window.AudioContext || window.webkitAudioContext)(); }
-      catch (_) { _actx = null; }
+      catch (err) { console.error('[inspector] AudioContext creation failed (replay disabled):', err); _actx = null; }
     }
     return _actx;
   }
@@ -1019,33 +1016,43 @@
     tts: { src: null, gain: null },
     active: false,
     fromMs: 0,
+    // Aborted by the next startAudioSources so in-flight fetches don't schedule stale sources.
+    abort: null,
+    // All scheduled sources; stopAudioSources walks this so nothing leaks if only one side is referenced.
+    sources: [],
   };
 
-  async function fetchAudioBuffer(channel, fromMs, toMs) {
+  async function fetchAudioBuffer(channel, fromMs, toMs, signal) {
     if (!currentSid) return null;
     const url = `/v1/inspect/sessions/${encodeURIComponent(currentSid)}/audio?channel=${channel}&from_ms=${fromMs|0}&to_ms=${toMs|0}`;
     try {
-      const r = await fetch(url);
+      const r = await fetch(url, { signal });
       if (!r.ok) return null;
       const buf = await r.arrayBuffer();
-      if (buf.byteLength <= 44) return null; // just a WAV header
+      if (buf.byteLength <= 44) return null;
       const actx = getActx();
       if (!actx) return null;
       return await actx.decodeAudioData(buf);
-    } catch (_) { return null; }
+    } catch (err) {
+      if (err && err.name === 'AbortError') return null;
+      console.error('[inspector] fetchAudioBuffer failed:', channel, fromMs, toMs, err);
+      return null;
+    }
   }
 
-  function stopPlayback() {
+  function stopAudioSources() {
+    if (_audio.abort) { _audio.abort.abort(); _audio.abort = null; }
+    for (const src of _audio.sources) {
+      try { src.stop(); } catch (_) {}
+    }
+    _audio.sources = [];
     for (const side of ['mic', 'tts']) {
-      const s = _audio[side];
-      if (s.src) { try { s.src.stop(); } catch (_) {} s.src = null; }
+      _audio[side].src = null;
     }
     _audio.active = false;
   }
 
-  // If the playback was initiated by selecting a user-speech event (vad/stt/turn),
-  // TTS is irrelevant and vice-versa. This function returns an effective channel mask
-  // that combines the user's mute toggles with the semantic hint of the anchor event.
+  // Anchor lane hints which channel is relevant (user-speech lanes -> mic only, tts lanes -> tts only).
   function effectiveChannels(anchor) {
     const prefer = { mic: true, tts: true };
     if (anchor && anchor.lane) {
@@ -1056,21 +1063,29 @@
       else if (anchor.lane === 'response' && anchor.kind === 'phrase_boundary') prefer.mic = false;
     }
     return {
-      mic: replay.channels.mic && prefer.mic,
-      tts: replay.channels.tts && prefer.tts,
+      mic: playback.channels.mic && prefer.mic,
+      tts: playback.channels.tts && prefer.tts,
     };
   }
 
-  async function startPlayback(fromMs, toMs, anchor) {
-    stopPlayback();
+  async function startAudioSources(fromMs, toMs, anchor) {
+    stopAudioSources();
+    const ctl = new AbortController();
+    _audio.abort = ctl;
+    const signal = ctl.signal;
     const actx = getActx();
     if (!actx) return;
-    if (actx.state === 'suspended') { try { await actx.resume(); } catch (_) {} }
+    if (actx.state === 'suspended') {
+      try { await actx.resume(); }
+      catch (err) { console.error('[inspector] replay AudioContext resume failed (audio will not play):', err); }
+    }
+    if (signal.aborted) return;
     const eff = effectiveChannels(anchor);
     const [micBuf, ttsBuf] = await Promise.all([
-      eff.mic ? fetchAudioBuffer('mic_in', fromMs, toMs) : Promise.resolve(null),
-      eff.tts ? fetchAudioBuffer('tts_out', fromMs, toMs) : Promise.resolve(null),
+      eff.mic ? fetchAudioBuffer('mic_in', fromMs, toMs, signal) : Promise.resolve(null),
+      eff.tts ? fetchAudioBuffer('tts_out', fromMs, toMs, signal) : Promise.resolve(null),
     ]);
+    if (signal.aborted) return;
     const speed = parseFloat(TWEAKS.replaySpeed || '1') || 1;
     const t0 = actx.currentTime + 0.02;
     function schedule(side, buf) {
@@ -1081,9 +1096,11 @@
       const g = actx.createGain();
       g.gain.value = 1;
       src.connect(g).connect(actx.destination);
-      try { src.start(t0); } catch (_) {}
+      try { src.start(t0); }
+      catch (err) { console.error('[inspector] BufferSource.start failed:', side, t0, err); }
       _audio[side].src = src;
       _audio[side].gain = g;
+      _audio.sources.push(src);
     }
     schedule('mic', micBuf);
     schedule('tts', ttsBuf);
@@ -1096,10 +1113,9 @@
     if (g) g.gain.value = on ? 1 : 0;
   }
 
-  // Update the status line AND drive real playback when replay is active.
   function updateAudioIndicator(ph) {
     const el = $('#stAudio');
-    if (replay.active) {
+    if (playback.active) {
       el.textContent = `audio ● playing @ ${window.__formatMs(ph)}`;
       el.style.color = '';
     } else {
@@ -1108,42 +1124,39 @@
     }
   }
 
-  // Replay controls: Stop is the only button; Space drives play/stop.
-  $('#btnReplayStop').addEventListener('click', stopReplay);
+  $('#btnReplayStop').addEventListener('click', stopPlayback);
   $('#btnChMic').addEventListener('click', () => {
-    replay.channels.mic = !replay.channels.mic;
-    $('#btnChMic').setAttribute('aria-pressed', replay.channels.mic ? 'true' : 'false');
-    applyChannelGain('mic', replay.channels.mic);
-    if (replay.active) updateAudioIndicator(tl.playheadMs ?? 0);
+    playback.channels.mic = !playback.channels.mic;
+    $('#btnChMic').setAttribute('aria-pressed', playback.channels.mic ? 'true' : 'false');
+    applyChannelGain('mic', playback.channels.mic);
+    if (playback.active) updateAudioIndicator(tl.playheadMs ?? 0);
   });
   $('#btnChTts').addEventListener('click', () => {
-    replay.channels.tts = !replay.channels.tts;
-    $('#btnChTts').setAttribute('aria-pressed', replay.channels.tts ? 'true' : 'false');
-    applyChannelGain('tts', replay.channels.tts);
-    if (replay.active) updateAudioIndicator(tl.playheadMs ?? 0);
+    playback.channels.tts = !playback.channels.tts;
+    $('#btnChTts').setAttribute('aria-pressed', playback.channels.tts ? 'true' : 'false');
+    applyChannelGain('tts', playback.channels.tts);
+    if (playback.active) updateAudioIndicator(tl.playheadMs ?? 0);
   });
 
   window.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT') return;
-    if (e.key === 'Escape' && replay.active) { stopReplay(); e.preventDefault(); }
+    if (e.key === 'Escape' && playback.active) { stopPlayback(); e.preventDefault(); }
   });
 
-  // Shift-drag on timeline → select range to replay
-  // Drag playhead during replay → scrub time
+  // Shift-drag selects replay range; dragging the playhead during replay scrubs.
   const tlWrap = wrap;
-  let selDrag = null;      // { startMs }
+  let selDrag = null;
   let playheadDrag = false;
   tlWrap.addEventListener('mousedown', (e) => {
     if (e.button !== 0) return;
     const rect = tlWrap.getBoundingClientRect();
     const px = e.clientX - rect.left;
     const tMs = tl._pxToMs(px);
-    // If replay active and mouse is near playhead → start scrubbing
-    if (replay.active && tl.playheadMs != null) {
+    if (playback.active && tl.playheadMs != null) {
       const phPx = tl.msToPx(tl.playheadMs);
       if (Math.abs(phPx - px) < 8) {
         playheadDrag = true;
-        replay.scrubbing = true;
+        playback.scrubbing = true;
         e.stopPropagation();
         return;
       }
@@ -1159,39 +1172,36 @@
     if (playheadDrag) {
       const ph = Math.max(0, tl._pxToMs(px));
       tl.playheadMs = ph;
-      // rebase timer so playback resumes from here
-      replay.startWall = performance.now();
-      replay.startMs = ph;
+      playback.startWall = performance.now();
+      playback.startMs = ph;
       updateAudioIndicator(ph);
       tl.draw();
       return;
     }
     if (selDrag) {
       const tMs = tl._pxToMs(px);
-      tl.replayRange = { t0: Math.min(selDrag.startMs, tMs), t1: Math.max(selDrag.startMs, tMs) };
+      tl.playbackRange = { t0: Math.min(selDrag.startMs, tMs), t1: Math.max(selDrag.startMs, tMs) };
       tl.draw();
     }
   });
   window.addEventListener('mouseup', () => {
     if (playheadDrag) {
       playheadDrag = false;
-      replay.scrubbing = false;
-      // Re-seek audio to the new playhead position.
-      if (replay.active && tl.playheadMs != null) {
+      playback.scrubbing = false;
+      if (playback.active && tl.playheadMs != null) {
         const from = tl.playheadMs | 0;
-        const to = replay.mode === 'window' ? (replay.endMs | 0) : 0;
-        startPlayback(from, to).catch(() => {});
+        const to = playback.mode === 'window' ? (playback.endMs | 0) : 0;
+        startAudioSources(from, to).catch(err => console.error('[inspector] startAudioSources (re-seek) failed:', err));
       }
     }
-    if (selDrag && tl.replayRange) {
-      const r = tl.replayRange;
-      if (r.t1 - r.t0 > 40) startReplay('window', { t0: r.t0, t1: r.t1 });
-      else { tl.replayRange = null; tl.draw(); }
+    if (selDrag && tl.playbackRange) {
+      const r = tl.playbackRange;
+      if (r.t1 - r.t0 > 40) startPlayback('window', { t0: r.t0, t1: r.t1 });
+      else { tl.playbackRange = null; tl.draw(); }
     }
     selDrag = null;
   });
 
-  // ---- Boot ----------------------------------------------------------------
   async function boot() {
     const params = new URLSearchParams(location.search);
     const sid = params.get('sid');
@@ -1220,9 +1230,7 @@
     startLivePoll();
   }
 
-  // Poll live sessions in the background so a newly-started realtime session
-  // auto-loads when the inspector is idle, and gently flashes the session pill
-  // when a *different* session appears while another is open.
+  // Poll live sessions; auto-load when idle, else flash pill if a different session appears.
   let _lastLiveIds = new Set();
   function startLivePoll() {
     setInterval(async () => {
@@ -1231,11 +1239,9 @@
         if (!r.ok) return;
         const arr = await r.json();
         const ids = new Set(arr.map(s => s.id));
-        // new live sessions since last tick
         const fresh = [...ids].filter(i => !_lastLiveIds.has(i));
         _lastLiveIds = ids;
         if (!fresh.length) return;
-        // auto-load if we're currently on nothing live (e.g. the boot picked a history entry)
         const onDead = !currentWs || currentWs.readyState !== 1;
         if (onDead) {
           const pickId = fresh[0];
@@ -1243,10 +1249,11 @@
           openSession(pickId);
           flashPill();
         } else if (!ids.has(currentSid)) {
-          // current session ended but a new live one exists; just flash
           flashPill();
         }
-      } catch (_) {}
+      } catch (err) {
+        console.error('[inspector] live-session poll failed:', err);
+      }
     }, 2000);
   }
   function flashPill() {
@@ -1256,7 +1263,6 @@
     p.style.boxShadow = '0 0 0 2px var(--accent)';
     setTimeout(() => { p.style.boxShadow = ''; }, 900);
   }
-  // Allow the test client (client.js) to open a session in the inspector.
   window.addEventListener('inspector:openSession', (e) => {
     if (e.detail && e.detail.sid) {
       history.replaceState(null, '', `?sid=${encodeURIComponent(e.detail.sid)}`);
@@ -1273,14 +1279,12 @@
     if (interesting) selectEvent(interesting);
   }, 600);
 
-  // ---- Settings sidebar ------------------------------------------------
   const settingsBtn = $('#btnSettings');
   const settingsPanel = $('#settingsPanel');
   const settingsClose = $('#settingsClose');
   const ssetFooter = $('#ssetFooter');
   const ssetAudio = $('#ssetAudio');
 
-  // Server model catalog (fetched once)
   const _catalog = { stt: [], tts: [], voices: {} };
 
   async function fetchModelCatalog() {
@@ -1298,10 +1302,9 @@
       }
       populateSelect('#modelStt', _catalog.stt);
       populateSelect('#modelTts', _catalog.tts);
-      // When TTS changes, repopulate voices
       $('#modelTts').addEventListener('change', () => updateVoiceOptions());
       updateVoiceOptions();
-    } catch (_) { /* offline or error */ }
+    } catch (_) {}
   }
 
   function populateSelect(sel, items, current) {
@@ -1353,7 +1356,6 @@
     flashFooter();
   }
 
-  // Populate from session.created event (captured by client.js)
   function populateSettings(session) {
     if (!session) return;
     const td = session.turn_detection || {};
@@ -1366,7 +1368,6 @@
     $('#vadBargeIn').value = td.barge_in_delay_ms ?? 400;
     $('#modelLlm').value = session.model || '';
 
-    // Set select values (add option if not in catalog)
     setSelectValue('#modelStt', iat.model);
     setSelectValue('#modelTts', session.speech_model);
     updateVoiceOptions(session.voice);
@@ -1377,6 +1378,9 @@
     const mode = session.audio_direct_to_llm ? 'audio_direct' : 'stt';
     document.querySelector(`input[name="audio_mode"][value="${mode}"]`).checked = true;
     ssetAudio.dataset.mode = mode;
+    if (session.audio_direct_model) {
+      $('#audioDirectModel').value = session.audio_direct_model;
+    }
     if (session.audio_direct_prompt) {
       $('#audioDirectPrompt').value = session.audio_direct_prompt;
     }
@@ -1385,7 +1389,6 @@
   function setSelectValue(sel, val) {
     const el = typeof sel === 'string' ? $(sel) : sel;
     if (!val) return;
-    // Add option if not present
     if (![...el.options].some(o => o.value === val)) {
       const opt = document.createElement('option');
       opt.value = val; opt.textContent = val;
@@ -1396,7 +1399,6 @@
 
   window.__inspectPopulateSettings = populateSettings;
 
-  // Audio mode radio
   document.querySelectorAll('input[name="audio_mode"]').forEach(r => {
     r.addEventListener('change', () => {
       const mode = r.value;
@@ -1405,7 +1407,14 @@
     });
   });
 
-  // Audio direct prompt (debounced)
+  let _adModelTimer = null;
+  $('#audioDirectModel').addEventListener('input', (e) => {
+    clearTimeout(_adModelTimer);
+    _adModelTimer = setTimeout(() => {
+      sendSessionUpdate({ audio_direct_model: e.target.value });
+    }, 600);
+  });
+
   let _promptTimer = null;
   $('#audioDirectPrompt').addEventListener('input', (e) => {
     clearTimeout(_promptTimer);
@@ -1414,14 +1423,12 @@
     }, 600);
   });
 
-  // VAD threshold slider
   $('#vadThreshold').addEventListener('input', (e) => {
     const v = parseFloat(e.target.value);
     $('#vadThresholdVal').textContent = v.toFixed(2);
     sendSessionUpdate({ turn_detection: { threshold: v } });
   });
 
-  // VAD number inputs (debounced)
   function vadNumberInput(id, field) {
     let t = null;
     $(id).addEventListener('input', (e) => {
@@ -1435,7 +1442,6 @@
   vadNumberInput('#vadSilence', 'silence_duration_ms');
   vadNumberInput('#vadBargeIn', 'barge_in_delay_ms');
 
-  // Model selects
   $('#modelStt').addEventListener('change', (e) => sendSessionUpdate({ input_audio_transcription: { model: e.target.value } }));
   $('#modelTts').addEventListener('change', (e) => {
     sendSessionUpdate({ speech_model: e.target.value });
@@ -1443,21 +1449,18 @@
   });
   $('#modelVoice').addEventListener('change', (e) => sendSessionUpdate({ voice: e.target.value }));
 
-  // LLM model (text input, debounced)
   let _llmTimer = null;
   $('#modelLlm').addEventListener('input', (e) => {
     clearTimeout(_llmTimer);
     _llmTimer = setTimeout(() => sendSessionUpdate({ model: e.target.value }), 600);
   });
 
-  // Instructions (debounced)
   let _instrTimer = null;
   $('#instructions').addEventListener('input', (e) => {
     clearTimeout(_instrTimer);
     _instrTimer = setTimeout(() => sendSessionUpdate({ instructions: e.target.value }), 600);
   });
 
-  // ---- Device selection ---------------------------------------------------
   async function enumerateDevices() {
     try {
       const devices = await navigator.mediaDevices.enumerateDevices();

@@ -1,9 +1,3 @@
-// ---------------------------------------------------------------------------
-// Synthetic event generator (v2) for the Realtime Session Inspector.
-// Aligned with the schema refinements: 9 lanes, turn markers, multi-corr refs,
-// audio_level sparkline, response-assembly lane, dedicated error overlay.
-// ---------------------------------------------------------------------------
-
 (function () {
   const MODEL  = 'gpt-4o-realtime-preview-2024-10-01';
   const VOICE  = 'alloy';
@@ -11,10 +5,6 @@
 
   let _seq = 0;
 
-  // Event shape:
-  // { session_id, seq, ts_mono_ns, ts_wall, lane, kind,
-  //   corr: { item_id?, response_id?, phrase_id?, turn_id? },
-  //   span_id, payload, t (ms from session_start) }
   function mk(lane, kind, t_ms, payload = {}, corr = null) {
     return {
       session_id: 'sess_7f3a2b9c',
@@ -30,12 +20,10 @@
     };
   }
 
-  // Audio-level sparkline: one sample per 40ms window.
   function audioWindow(t0_ms, t1_ms, baseRms, peak, corr) {
     const out = [];
     for (let t = t0_ms; t < t1_ms; t += 40) {
       const phase = (t - t0_ms) / (t1_ms - t0_ms);
-      // envelope: ramp up, plateau, ramp down
       const env = phase < 0.15 ? phase / 0.15
                 : phase > 0.85 ? (1 - phase) / 0.15
                 : 1;
@@ -54,7 +42,6 @@
     return out;
   }
 
-  // ---- Clean scenario: two full turns --------------------------------------
   function generateClean() {
     _seq = 0;
     const E = [];
@@ -67,13 +54,11 @@
     const item2a = { ...turn2, item_id: 'item_01HN3ZD7PQ' };
     const resp2 = { ...turn2, response_id: 'resp_8b4f3e2d' };
 
-    // --- Pre-turn silence
     E.push(...audioSilence(0, 200));
     E.push(mk('turn', 'turn_start', 0, { turn_id: 'turn_01', role: 'user' }, turn1));
     E.push(mk('wire', 'in', 40, { event_type: 'session.update', bytes: 412 }));
     E.push(mk('wire', 'out', 52, { event_type: 'session.created', bytes: 288 }));
 
-    // --- Turn 1: user asks weather
     E.push(...audioSilence(200, 360));
     E.push(mk('vad', 'pending_start', 180, { prob: 0.62, rms: 0.074 }, item1));
     E.push(mk('vad', 'confirmed_start', 380, { prob: 0.91, rms: 0.12 }, item1));
@@ -95,17 +80,14 @@
     E.push(...audioSilence(2080, 2400));
     E.push(mk('wire', 'out', 2200, { event_type: 'conversation.item.created', bytes: 612 }));
 
-    // Response assembly lane: planning begins
     E.push(mk('response', 'plan_start', 2220, { trigger: 'vad_commit' }, resp1));
     E.push(mk('turn', 'turn_start', 2220, { turn_id: 'turn_01', role: 'assistant' }, { ...turn1, response_id: resp1.response_id }));
 
-    // LLM
     E.push(mk('llm', 'request', 2240, { model: MODEL, tok_in: 312 }, resp1));
     E.push(mk('wire', 'in', 2244, { event_type: 'response.create', bytes: 96 }));
     E.push(mk('llm', 'first_token', 2680, { elapsed_ms: 440, ttft_ms: 440 }, resp1));
 
     const reply1 = "Tomorrow in San Francisco, expect partly cloudy skies. Highs near 64 degrees, with light winds from the west.";
-    // Realistic chunk stream: split by ~3 chars each
     let cursor = 0;
     let tok = 0;
     let tChunk = 2700;
@@ -120,7 +102,6 @@
       }, resp1));
     }
 
-    // Response assembly: phrase boundary detection splits into 2 phrases
     const p1 = { ...resp1, phrase_id: `${resp1.response_id}:0` };
     const p2 = { ...resp1, phrase_id: `${resp1.response_id}:1` };
     E.push(mk('response', 'phrase_boundary', 2920, {
@@ -130,7 +111,6 @@
       phrase_id: p2.phrase_id, text: "Highs near 64 degrees, with light winds from the west.", reason: 'sentence_end',
     }, p2));
 
-    // TTS phrase 1
     E.push(mk('tts_req', 'phrase_sent', 2940, {
       text: "Tomorrow in San Francisco, expect partly cloudy skies.", voice: VOICE, model: TTS_MODEL,
     }, p1));
@@ -145,7 +125,6 @@
     }
     E.push(mk('tts_req', 'phrase_done', 4240, { ms_audio: 2880 }, p1));
 
-    // TTS phrase 2
     E.push(mk('tts_req', 'phrase_sent', 3320, {
       text: "Highs near 64 degrees, with light winds from the west.", voice: VOICE, model: TTS_MODEL,
     }, p2));
@@ -165,10 +144,8 @@
     E.push(mk('wire', 'out', 4620, { event_type: 'response.done', bytes: 540 }));
     E.push(mk('turn', 'turn_end', 4660, { turn_id: 'turn_01' }, { ...turn1, response_id: resp1.response_id }));
 
-    // Inter-turn silence
     E.push(...audioSilence(4660, 6200));
 
-    // --- Turn 2: follow-up
     E.push(mk('turn', 'turn_start', 6200, { turn_id: 'turn_02', role: 'user' }, turn2));
     E.push(mk('vad', 'pending_start', 6240, { prob: 0.66, rms: 0.08 }, item2));
     E.push(mk('vad', 'confirmed_start', 6420, { prob: 0.92, rms: 0.13 }, item2));
@@ -218,7 +195,6 @@
     return E;
   }
 
-  // ---- Problem scenario: TTS stall + missed barge-in + LLM error -----------
   function generateProblem() {
     _seq = 0;
     const E = [];
@@ -271,7 +247,6 @@
     }
     E.push(mk('tts_req', 'phrase_done', 4480, { ms_audio: 3200 }, p1));
 
-    // Phrase 2 planned
     const p2 = { ...resp1, phrase_id: `${resp1.response_id}:1` };
     const reply2 = "Its keeper, a woman named Ines, kept the lamp burning through every gale.";
     cursor = 0; tChunk = 4400;
@@ -287,9 +262,7 @@
       phrase_id: p2.phrase_id, text: reply2, reason: 'sentence_end',
     }, p2));
     E.push(mk('tts_req', 'phrase_sent', 4540, { text: reply2, voice: VOICE, model: TTS_MODEL }, p2));
-    // …no first_chunk — stalls
 
-    // Barge-in that doesn't fire: user pending_start never confirms
     E.push(...audioWindow(5100, 5460, 0.02, 0.09, item1b));
     E.push(mk('vad', 'pending_start', 5220, {
       prob: 0.68, rms: 0.082,
@@ -300,7 +273,6 @@
     }, item1b));
     E.push(...audioSilence(5460, 5940));
 
-    // TTS error
     E.push(mk('error', 'raised', 5940, {
       lane: 'tts_req',
       error: 'UpstreamClosedError: tts worker closed connection mid-phrase',
@@ -314,7 +286,6 @@
       event_type: 'response.audio.delta', dropped_count: 2, reason: 'queue_full',
     }));
 
-    // LLM keeps going, then done
     for (let i = 0; i < 10; i++) {
       E.push(mk('llm', 'chunk', 5200 + i * 42, {
         delta: '.', text_so_far_len: 140 + i, tok_out: tok + i,
@@ -325,7 +296,6 @@
       phrases: 2, completed_phrases: 1, failed_phrases: 1, total_audio_ms: 3200,
     }, resp1));
 
-    // User tries again
     const item2 = { turn_id: 'turn_02', item_id: 'item_01HN4XD1XY' };
     const turn2 = { turn_id: 'turn_02' };
     E.push(mk('turn', 'turn_start', 6400, { turn_id: 'turn_02', role: 'user' }, turn2));
@@ -346,7 +316,6 @@
     return E;
   }
 
-  // Live tail
   function liveTick(currentEvents, sessionStartWall) {
     const last = currentEvents[currentEvents.length - 1];
     const lastT = last ? last.t : 0;
@@ -371,7 +340,6 @@
   }
   function pick(a) { return a[Math.floor(Math.random() * a.length)]; }
 
-  // Lane metadata — 9 lanes, ordered top-down for a natural pipeline read
   const LANES = [
     { id: 'audio_level', name: 'Audio',        hint: 'PCM RMS · 40ms/window', cssVar: '--lane-audio' },
     { id: 'vad',         name: 'VAD',          hint: 'Silero',                cssVar: '--lane-vad' },

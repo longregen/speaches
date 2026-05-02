@@ -47,7 +47,6 @@ class _Track:
                 logger.exception("Failed to write audio track")
 
     def append_float32(self, samples: np.ndarray) -> None:
-        """Samples in [-1, 1] float32 mono at self.sample_rate."""
         if samples.size == 0:
             return
         clipped = np.clip(samples, -1.0, 1.0)
@@ -55,9 +54,6 @@ class _Track:
         self.append_pcm16(pcm16)
 
     def slice(self, from_ms: int, to_ms: int) -> bytes:
-        """Return PCM16 bytes for the given ms-range (from_ms inclusive, to_ms exclusive).
-        to_ms <= 0 means to end of stream.
-        """
         sr = self.sample_rate
         byte_offset = max(0, from_ms) * sr * 2 // 1000
         if to_ms <= 0:

@@ -1,8 +1,3 @@
-// ---------------------------------------------------------------------------
-// client.js — built-in realtime test client for the inspector.
-// One button: "New session" → connects, captures mic, plays TTS, shows status.
-// ---------------------------------------------------------------------------
-
 (function () {
   const SAMPLE_RATE = 24000;
   const BUFFER_SIZE = 4096;
@@ -15,13 +10,12 @@
     micProcessor: null,
     playCtx: null,
     playScheduledEnd: 0,
-    status: 'idle', // idle | connecting | live | speaking | processing | error
+    playSources: [],
+    status: 'idle',
     lastTranscript: '',
     lastResponse: '',
     responseText: '',
   };
-
-  // --- Audio helpers --------------------------------------------------------
 
   function resample(samples, fromRate, toRate) {
     if (fromRate === toRate) return samples;
@@ -64,13 +58,11 @@
     return f32;
   }
 
-  // --- Connection -----------------------------------------------------------
-
   async function connect() {
     if (state.ws) return;
     setStatus('connecting');
 
-    // Acquire mic FIRST — must happen in user-gesture context (click handler).
+    // Acquire mic first -- must run in a user-gesture context.
     try {
       const micId = window.__inspectSelectedMic || localStorage.getItem('inspect.deviceMic') || undefined;
       const audioConstraints = { echoCancellation: true, noiseSuppression: true, autoGainControl: true };
@@ -78,7 +70,6 @@
       const stream = await navigator.mediaDevices.getUserMedia({ audio: audioConstraints });
       state.micStream = stream;
       console.log('[client] mic acquired, sample rate will be determined after AudioContext creation');
-      // Re-enumerate now that permission is granted (labels + output devices become available)
       if (typeof window.__inspectEnumerateDevices === 'function') window.__inspectEnumerateDevices();
     } catch (err) {
       console.error('[client] mic permission denied or unavailable:', err);
@@ -86,18 +77,21 @@
       return;
     }
 
-    // Create AudioContext in user-gesture context too (prevents "suspended" state).
+    // Create both AudioContexts inside the user gesture so neither lands suspended.
     try {
       state.micCtx = new AudioContext();
       if (state.micCtx.state === 'suspended') await state.micCtx.resume();
       console.log('[client] AudioContext created, sampleRate:', state.micCtx.sampleRate);
+      state.playCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
+      if (state.playCtx.state === 'suspended') await state.playCtx.resume();
+      state.playScheduledEnd = 0;
+      console.log('[client] Playback AudioContext created');
     } catch (err) {
       console.error('[client] AudioContext creation failed:', err);
       setStatus('error');
       return;
     }
 
-    // Wire up the mic processing pipeline.
     const source = state.micCtx.createMediaStreamSource(state.micStream);
     const processor = state.micCtx.createScriptProcessor(BUFFER_SIZE, 1, 1);
     const nativeRate = state.micCtx.sampleRate;
@@ -114,7 +108,7 @@
     };
 
     source.connect(processor);
-    // Muted output so we don't hear our own mic through speakers.
+    // Muted output keeps the mic graph running without echoing to speakers.
     const muter = state.micCtx.createGain();
     muter.gain.value = 0;
     processor.connect(muter);
@@ -122,7 +116,6 @@
     state.micProcessor = processor;
     console.log('[client] mic pipeline wired, opening WebSocket...');
 
-    // Now connect the WebSocket.
     const model = btn.dataset.model || 'llm-default';
     const sttModel = btn.dataset.stt || 'deepdml/faster-whisper-large-v3-turbo-ct2';
     const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
@@ -148,7 +141,7 @@
 
   function disconnect() {
     stopMic();
-    stopPlayback();
+    teardownPlayback();
     if (state.ws) { try { state.ws.close(); } catch (_) {} state.ws = null; }
     window.__inspectRealtimeWs = null;
     state.sessionId = null;
@@ -156,22 +149,20 @@
     setStatus('idle');
   }
 
-  // --- Server events --------------------------------------------------------
-
   function onMessage(ev) {
     let msg;
-    try { msg = JSON.parse(ev.data); } catch (_) { return; }
+    try { msg = JSON.parse(ev.data); } catch (err) {
+      console.error('[client] failed to parse server message:', err, ev.data);
+      return;
+    }
     console.log('[client] <<', msg.type);
     switch (msg.type) {
       case 'session.created':
         state.sessionId = msg.session.id;
-        // Expose WS for settings sidebar
         window.__inspectRealtimeWs = state.ws;
-        // Populate settings panel from session defaults
         if (typeof window.__inspectPopulateSettings === 'function') {
           window.__inspectPopulateSettings(msg.session);
         }
-        // Update voice (mic is already streaming).
         state.ws.send(JSON.stringify({
           type: 'session.update',
           session: {
@@ -179,7 +170,6 @@
             instructions: 'Provide very short, concise answers. Keep responses to one or two sentences whenever possible.',
           },
         }));
-        // Auto-open this session in the inspector timeline.
         window.dispatchEvent(
           new CustomEvent('inspector:openSession', { detail: { sid: msg.session.id } })
         );
@@ -187,7 +177,7 @@
 
       case 'input_audio_buffer.speech_started':
         setStatus('speaking');
-        stopPlayback(); // barge-in
+        silencePlayback();
         state.responseText = '';
         break;
 
@@ -225,23 +215,19 @@
     }
   }
 
-  // --- Microphone -----------------------------------------------------------
-
   function stopMic() {
     if (state.micProcessor) { state.micProcessor.disconnect(); state.micProcessor = null; }
     if (state.micCtx) { try { state.micCtx.close(); } catch (_) {} state.micCtx = null; }
     if (state.micStream) { state.micStream.getTracks().forEach(t => t.stop()); state.micStream = null; }
   }
 
-  // --- Playback -------------------------------------------------------------
-
   function playAudioChunk(b64) {
-    if (!state.playCtx) {
-      state.playCtx = new AudioContext({ sampleRate: SAMPLE_RATE });
-      state.playScheduledEnd = 0;
-    }
+    // Invariant: playCtx is created inside connect() during the user gesture; Safari blocks otherwise.
+    if (!state.playCtx) throw new Error('playAudioChunk called before connect() created playCtx');
     const ctx = state.playCtx;
-    if (ctx.state === 'suspended') ctx.resume().catch(() => {});
+    if (ctx.state === 'suspended') {
+      ctx.resume().catch(err => console.error('[client] playCtx.resume() failed (audio will not play):', err));
+    }
     const samples = base64ToFloat32(b64);
     const buf = ctx.createBuffer(1, samples.length, SAMPLE_RATE);
     buf.getChannelData(0).set(samples);
@@ -252,14 +238,25 @@
     const at = Math.max(now + 0.005, state.playScheduledEnd);
     src.start(at);
     state.playScheduledEnd = at + buf.duration;
+    state.playSources.push(src);
+    src.onended = () => {
+      const i = state.playSources.indexOf(src);
+      if (i >= 0) state.playSources.splice(i, 1);
+    };
   }
 
-  function stopPlayback() {
-    if (state.playCtx) { try { state.playCtx.close(); } catch (_) {} state.playCtx = null; }
+  function silencePlayback() {
+    for (const src of state.playSources) {
+      try { src.stop(); } catch (_) {}
+    }
+    state.playSources = [];
     state.playScheduledEnd = 0;
   }
 
-  // --- UI -------------------------------------------------------------------
+  function teardownPlayback() {
+    silencePlayback();
+    if (state.playCtx) { try { state.playCtx.close(); } catch (_) {} state.playCtx = null; }
+  }
 
   const btn = document.getElementById('btnNewSession');
   if (!btn) return;
@@ -309,7 +306,6 @@
     }
   });
 
-  // Allow configuring model/voice via URL params.
   const params = new URLSearchParams(location.search);
   btn.dataset.model = params.get('client_model') || 'llm-default';
   btn.dataset.voice = params.get('client_voice') || 'af_heart';

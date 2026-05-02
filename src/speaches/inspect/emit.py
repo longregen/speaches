@@ -25,7 +25,13 @@ def _current_span_id() -> str | None:
     return None
 
 
-def emit(lane: LaneId, kind: str, corr: dict[str, Any] | None = None, **payload: Any) -> None:
+def emit(
+    lane: LaneId,
+    kind: str,
+    corr: dict[str, Any] | None = None,
+    ts_wall_override: float | None = None,
+    **payload: Any,
+) -> None:
     sid = session_id_ctx.get()
     if sid is None:
         return
@@ -44,7 +50,7 @@ def emit(lane: LaneId, kind: str, corr: dict[str, Any] | None = None, **payload:
         session_id=sid,
         seq=relay.next_seq(),
         ts_mono_ns=time.perf_counter_ns(),
-        ts_wall=time.time(),
+        ts_wall=ts_wall_override if ts_wall_override is not None else time.time(),
         lane=lane,
         kind=kind,
         corr=Corr(**data),
@@ -62,7 +68,6 @@ def has_subscribers() -> bool:
     return relay is not None and relay.has_subscribers()
 
 
-# Mutators: writes the ID on the session's relay. Reads pick up across tasks.
 def set_turn_id(value: str | None) -> None:
     sid = session_id_ctx.get()
     if sid is None:

@@ -65,8 +65,6 @@ class InspectorRelay:
                 logger.exception("Failed to write inspector ndjson")
         for q in list(self._subscribers):
             self._enqueue(q, line)
-        # Error mirror: when kind is in ERR_KINDS (and not already the mirror),
-        # publish a synthetic error-lane copy.
         if event.lane != "error" and event.kind in ERR_KINDS:
             self._publish_error_mirror(event)
 
@@ -102,7 +100,6 @@ class InspectorRelay:
         try:
             q.put_nowait(line)
         except asyncio.QueueFull:
-            # Drop oldest and retry once; if still full, drop this message.
             try:
                 _ = q.get_nowait()
                 q.put_nowait(line)
@@ -112,7 +109,6 @@ class InspectorRelay:
 
     async def subscribe(self) -> AsyncGenerator[bytes]:
         q: asyncio.Queue[bytes] = asyncio.Queue(maxsize=_FANOUT_MAX)
-        # Replay the full buffer first; snapshot to avoid races with publish().
         snapshot = list(self._buffer)
         for line in snapshot:
             q.put_nowait(line)

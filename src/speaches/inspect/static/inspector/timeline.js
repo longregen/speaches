@@ -1,22 +1,4 @@
-// timeline.js — canvas rendering for the inspector.
-//
-// SECTIONS
-//   1. Config         — lane metadata + palettes, shared with app.js via INSPECTOR_DATA
-//   2. Domain types   — Band, Turn factories
-//   3. Constructor    — fields, resize wiring
-//   4. Ingest         — events → bands + turns, split per lane
-//   5. Coordinates    — ms/px, lane heights, hidden-lane check, color lookup
-//   6. Render         — ruler, lanes, sparkline, minimap, gutter
-//   7. Band drawing   — band rects, band labels, label text
-//   8. Tick drawing   — point-event glyphs
-//   9. Hit-test       — tick-first, then band endpoints
-//  10. View commands  — zoom, pan, fit, toEnd, setters
-//  11. Formatters     — formatMs, niceStep, isBandEndpoint
-
 (function () {
-  // ─────────────────────────────────────────────────────────────────────────
-  // 1. Config
-  // ─────────────────────────────────────────────────────────────────────────
   const D_FALLBACK = {
     LANES: [
       { id: 'error',       name: 'Error',       hint: '' },
@@ -27,17 +9,18 @@
       { id: 'bargein',     name: 'Barge-in',    hint: 'user interrupts' },
       { id: 'llm',         name: 'LLM',         hint: 'model' },
       { id: 'response',    name: 'Response',    hint: 'plan / phrase' },
+      { id: 'tool',        name: 'Tool',        hint: 'use / result / summary' },
       { id: 'tts_req',     name: 'TTS phrases', hint: 'tts executor' },
       { id: 'tts_chunk',   name: 'TTS chunks',  hint: '24 kHz PCM' },
       { id: 'wire',        name: 'Wire',        hint: 'protocol' },
     ],
     PALETTES: {
-      warm:     { audio_level:'#6E7C7F', vad:'#7A92A8', stt:'#7F9B7F', turn:'#9F7E9B', bargein:'#C06B8A', llm:'#A8906A', response:'#C89B6A', tts_req:'#C4A45A', tts_chunk:'#B88B5A', wire:'#9B9590', error:'#B88080' },
-      semantic: { audio_level:'#6BBED3', vad:'#6FA8DC', stt:'#6BBE7F', turn:'#C77BBA', bargein:'#F07B90', llm:'#C8A2E8', response:'#E8A96B', tts_req:'#E8A96B', tts_chunk:'#E8C76B', wire:'#9B9590', error:'#E87878' },
-      mono:     { audio_level:'#5A564F', vad:'#8D7A5A', stt:'#A8906A', turn:'#8E7958', bargein:'#A67A66', llm:'#C8B08E', response:'#DEC49B', tts_req:'#DEC49B', tts_chunk:'#BC9C6E', wire:'#726B62', error:'#B88080' },
+      warm:     { audio_level:'#6E7C7F', vad:'#7A92A8', stt:'#7F9B7F', turn:'#9F7E9B', bargein:'#C06B8A', llm:'#A8906A', response:'#C89B6A', tool:'#9CA88A', tts_req:'#C4A45A', tts_chunk:'#B88B5A', wire:'#9B9590', error:'#B88080' },
+      semantic: { audio_level:'#6BBED3', vad:'#6FA8DC', stt:'#6BBE7F', turn:'#C77BBA', bargein:'#F07B90', llm:'#C8A2E8', response:'#E8A96B', tool:'#88C9A1', tts_req:'#E8A96B', tts_chunk:'#E8C76B', wire:'#9B9590', error:'#E87878' },
+      mono:     { audio_level:'#5A564F', vad:'#8D7A5A', stt:'#A8906A', turn:'#8E7958', bargein:'#A67A66', llm:'#C8B08E', response:'#DEC49B', tool:'#A8B091', tts_req:'#DEC49B', tts_chunk:'#BC9C6E', wire:'#726B62', error:'#B88080' },
     },
   };
-  // Lazy getter so timeline.js can load before app.js has populated INSPECTOR_DATA.
+  // Lazy accessor: timeline.js loads before app.js sets INSPECTOR_DATA.
   const D = new Proxy({}, {
     get(_target, prop) {
       const src = window.INSPECTOR_DATA || D_FALLBACK;
@@ -47,29 +30,20 @@
 
   const ERROR_KINDS = new Set(['error', 'phrase_error', 'dropped', 'raised', 'bargein_missed']);
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // 2. Domain types
-  // ─────────────────────────────────────────────────────────────────────────
-  // A Band is a time-range drawn as a rectangle on its lane.
-  // open/close are the opening/closing point-events that bracketed the range.
   function makeBand(lane, kind, t0, t1, { open, close = null, corr = {}, ongoing = false } = {}) {
     return { lane, kind, t0, t1, open, close, corr, ongoing };
   }
-  // A Turn is a conversational boundary overlay spanning the whole canvas.
   function makeTurn(turnId, t0, t1) {
     return { turn_id: turnId, t0, t1 };
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // 3. Constructor
-  // ─────────────────────────────────────────────────────────────────────────
   function Timeline(opts) {
     this.lanes = D.LANES;
     this.events = [];
     this.bands = [];
     this.turns = [];
-    this.ttsPhraseTexts = new Map();   // phrase_id -> text, used by band labels
-    this.ttsChunkRows = 1;             // sub-row count inside the tts_chunk lane
+    this.ttsPhraseTexts = new Map();
+    this.ttsChunkRows = 1;
 
     this.view = { t0: 0, pxPerMs: 0.25 };
     this.followTail = true;
@@ -88,8 +62,8 @@
     this.hover = null;
     this.selected = null;
     this.cursorMs = null;
-    this.replayRange = null;   // {t0, t1} — highlighted selection band
-    this.playheadMs = null;    // current playback position
+    this.playbackRange = null;
+    this.playheadMs = null;
 
     this._dpr = Math.max(1, window.devicePixelRatio || 1);
     this.bindResize();
@@ -114,9 +88,6 @@
   Timeline.prototype._tlPxWidth  = function () { return this.tlCanvas.getBoundingClientRect().width; };
   Timeline.prototype._tlPxHeight = function () { return this.tlCanvas.getBoundingClientRect().height; };
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // 4. Ingest — events → bands + turns
-  // ─────────────────────────────────────────────────────────────────────────
   Timeline.prototype.setEvents = function (events) {
     this.events = events.slice();
     this.rebuildBands();
@@ -125,10 +96,15 @@
   };
   Timeline.prototype.appendEvent = function (ev) {
     this.events.push(ev);
-    this.rebuildBands();
-    this.rebuildTurns();
-    if (this.followTail && !this.paused) this.followTailIntoView();
-    this.draw();
+    if (this._frameScheduled) return;
+    this._frameScheduled = true;
+    requestAnimationFrame(() => {
+      this._frameScheduled = false;
+      this.rebuildBands();
+      this.rebuildTurns();
+      if (this.followTail && !this.paused) this.followTailIntoView();
+      this.draw();
+    });
   };
   Timeline.prototype.followTailIntoView = function () {
     if (!this.events.length) return;
@@ -138,8 +114,6 @@
     this.view.t0 = Math.max(0, last + pad - spanMs);
   };
 
-  // Ingest rebuilds bands from scratch each call (cheap for typical session sizes).
-  // Open/close pairings are tracked in per-lane maps keyed by the correlation id.
   Timeline.prototype.rebuildBands = function () {
     const s = {
       bands: [],
@@ -150,6 +124,7 @@
       ttsPlaybackOrigin: new Map(),
       ttsPlaybackCursor: new Map(),
       ttsPhraseTexts: new Map(),
+      bargeinOpen: new Map(),
     };
     for (const e of this.events) ingestBandEvent(s, e);
     const lastT = this.events.length ? this.events[this.events.length - 1].t : 0;
@@ -161,13 +136,11 @@
     if (this.ttsChunkRows !== prevRows) this.refreshGutterHeights();
   };
 
-  // Greedy interval packing: sort tts_chunk bands by t0 and assign each to the
-  // lowest row whose previously-placed band ended at or before this one starts.
-  // Chunks within the same response stay on the same row because they abut.
+  // Greedy interval packing: each tts_chunk goes on the lowest row whose last band ended before t0.
   function assignTtsChunkRows(bands) {
     const chunks = bands.filter(b => b.lane === 'tts_chunk');
     chunks.sort((a, b) => a.t0 - b.t0);
-    const rowEnds = []; // rowEnds[r] = last t1 placed on row r
+    const rowEnds = [];
     let maxRow = 0;
     for (const band of chunks) {
       let row = -1;
@@ -182,7 +155,6 @@
     return Math.max(1, maxRow + 1);
   }
 
-  // Route one event to the right lane-specific ingest handler.
   function ingestBandEvent(s, e) {
     const kind = e.kind;
     switch (e.lane) {
@@ -192,6 +164,47 @@
       case 'response':  return ingestResponse(s, e, kind);
       case 'tts_req':   return ingestTtsReq(s, e, kind);
       case 'tts_chunk': return (kind === 'chunk' || kind === 'first_chunk') ? ingestTtsChunk(s, e) : undefined;
+      case 'bargein':   return ingestBargein(s, e, kind);
+      case 'tool':      return ingestTool(s, e, kind);
+    }
+  }
+
+  // Tool lane: each tool's lifecycle =
+  //   use_token (LLM emitted the call)
+  //   → result (tool returned)
+  //   → start_summary (narrator began computing a summary)
+  //   → summary (narrator wrote a summary).
+  // Open the band on use_token, extend it through whichever of
+  // {result, start_summary, summary} arrives last so the band's right
+  // edge tracks the most informative moment. start_summary/summary
+  // also stamp ticks within the band. If the band never closes,
+  // it stays ongoing (drawn with an open right edge).
+  function ingestTool(s, e, kind) {
+    const p = e.payload || {};
+    const name = p.name;
+    if (!name) return;
+    if (!s.toolOpen) s.toolOpen = new Map();
+    if (!s.toolBand) s.toolBand = new Map();
+    if (kind === 'use_token') {
+      s.toolOpen.set(name, e);
+    } else if (kind === 'result' || kind === 'start_summary' || kind === 'summary') {
+      const open = s.toolOpen.get(name);
+      if (!open) return;
+      const existing = s.toolBand.get(name);
+      if (existing) {
+        existing.t1 = e.t;
+        existing.close = e;
+        // Prefer the most informative kind for label rendering:
+        //   summary > start_summary > result.
+        if (kind === 'summary' || (kind === 'start_summary' && existing.kind === 'result')) {
+          existing.kind = kind;
+        }
+        existing.ongoing = false;
+      } else {
+        const band = makeBand('tool', kind, open.t, e.t, { open, close: e, corr: e.corr || {} });
+        s.toolBand.set(name, band);
+        s.bands.push(band);
+      }
     }
   }
 
@@ -258,8 +271,7 @@
     }
   }
 
-  // TTS chunks pack together in a contiguous playback cursor per response,
-  // so consecutive chunks render as abutting bands — not at their wall-clock time.
+  // TTS chunks abut in a per-response playback cursor (not wall-clock time).
   function ingestTtsChunk(s, e) {
     const c = e.corr || {};
     const p = e.payload || {};
@@ -275,7 +287,26 @@
     s.ttsPlaybackCursor.set(rid, cursor + ms);
   }
 
-  // Any band whose closing event hasn't arrived yet gets extended to lastT.
+  function ingestBargein(s, e, kind) {
+    const c = e.corr || {};
+    const key = c.response_id || c.item_id || 'default';
+    if (kind === 'bargein_pending') {
+      s.bargeinOpen.set(key, e);
+    } else if (kind === 'bargein_fired') {
+      const open = s.bargeinOpen.get(key);
+      if (open) {
+        s.bands.push(makeBand('bargein', 'fired', open.t, e.t, { open, close: e, corr: c }));
+        s.bargeinOpen.delete(key);
+      }
+    } else if (kind === 'bargein_cancelled') {
+      const open = s.bargeinOpen.get(key);
+      if (open) {
+        s.bands.push(makeBand('bargein', 'cancelled', open.t, e.t, { open, close: e, corr: c }));
+        s.bargeinOpen.delete(key);
+      }
+    }
+  }
+
   function closeOngoingBands(s, lastT) {
     const push = (lane, kind, open) => s.bands.push(
       makeBand(lane, kind, open.t, lastT, { open, corr: open.corr, ongoing: true })
@@ -284,10 +315,10 @@
     s.llmOpen.forEach(o => push('llm', 'response', o));
     s.respOpen.forEach(o => push('response', 'assembly', o));
     s.ttsOpen.forEach(o => push('tts_req', 'phrase', o));
+    s.bargeinOpen.forEach(o => push('bargein', 'pending', o));
   }
 
   Timeline.prototype.rebuildTurns = function () {
-    // Pair turn_start (role=user) with its turn_end to get conversational turn ranges.
     const turns = [];
     let cur = null;
     for (const e of this.events) {
@@ -304,9 +335,6 @@
     this.turns = turns;
   };
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // 5. Coordinates & lookups
-  // ─────────────────────────────────────────────────────────────────────────
   Timeline.prototype.laneHeight = function (laneId) {
     const base = this.density === 'compact' ? 32 : 42;
     if (laneId === 'tts_chunk') {
@@ -328,13 +356,11 @@
     for (const l of this.lanes) y += this.laneHeight(l.id);
     return y;
   };
-  // Where a band's rectangle sits inside its lane (accounts for tts_chunk sub-rows).
   Timeline.prototype.bandRowMetrics = function (band, laneY, laneH) {
     if (band.lane === 'tts_chunk') {
       const base = this.density === 'compact' ? 32 : 42;
       const subH = this.subRowHeight();
       const row = band.row || 0;
-      // Row 0 occupies the normal lane row; subsequent rows stack below.
       if (row === 0) return { top: laneY + 6, rowH: base - 12 };
       return { top: laneY + base + (row - 1) * subH + 2, rowH: subH - 4 };
     }
@@ -351,9 +377,6 @@
   Timeline.prototype.msToPx = function (ms) { return (ms - this.view.t0) * this.view.pxPerMs; };
   Timeline.prototype._pxToMs = function (px) { return this.view.t0 + px / this.view.pxPerMs; };
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // 6. Render — top-level draw dispatch
-  // ─────────────────────────────────────────────────────────────────────────
   Timeline.prototype.draw = function () {
     this.drawRuler();
     this.drawLaneRows();
@@ -377,7 +400,6 @@
     const t0 = Math.floor(this.view.t0 / msPerTick) * msPerTick;
     const t1 = this.view.t0 + w / this.view.pxPerMs;
 
-    // Turn band backdrop in the ruler
     for (const turn of this.turns) {
       const x0 = this.msToPx(turn.t0), x1 = this.msToPx(turn.t1);
       if (x1 < 0 || x0 > w) continue;
@@ -427,7 +449,6 @@
     const w = c.width / this._dpr, h = c.height / this._dpr;
     ctx.clearRect(0, 0, w, h);
 
-    // Per-lane cumulative offsets (bottom edge of lane i is y = offsets[i] + height)
     const laneY = new Array(this.lanes.length);
     const laneH = new Array(this.lanes.length);
     {
@@ -439,7 +460,6 @@
       }
     }
 
-    // Lane row stripes + dividers
     for (let i = 0; i < this.lanes.length; i++) {
       ctx.fillStyle = i % 2 ? '#1A1A1A' : '#181818';
       ctx.fillRect(0, laneY[i], w, laneH[i]);
@@ -450,7 +470,6 @@
       ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
     }
 
-    // Turn overlay across full canvas
     for (const turn of this.turns) {
       const x0 = this.msToPx(turn.t0), x1 = this.msToPx(turn.t1);
       if (x1 < 0 || x0 > w) continue;
@@ -462,10 +481,9 @@
       ctx.setLineDash([]);
     }
 
-    // Replay selection band
-    if (this.replayRange) {
-      const rx0 = this.msToPx(this.replayRange.t0);
-      const rx1 = this.msToPx(this.replayRange.t1);
+    if (this.playbackRange) {
+      const rx0 = this.msToPx(this.playbackRange.t0);
+      const rx1 = this.msToPx(this.playbackRange.t1);
       ctx.fillStyle = 'rgba(200,176,142,0.09)';
       ctx.fillRect(rx0, 0, Math.max(2, rx1 - rx0), h);
       ctx.strokeStyle = 'rgba(200,176,142,0.55)';
@@ -475,7 +493,6 @@
       ctx.setLineDash([]);
     }
 
-    // Time gridlines
     const msPerTick = niceStep(120 / this.view.pxPerMs);
     const gridT0 = Math.floor(this.view.t0 / msPerTick) * msPerTick;
     const gridT1 = this.view.t0 + w / this.view.pxPerMs;
@@ -485,10 +502,8 @@
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
     }
 
-    // Audio sparkline (own lane; filled polyline, not bands)
     this.drawAudioSparkline(ctx, w);
 
-    // Bands
     for (const band of this.bands) {
       if (this.isLaneHidden(band.lane)) continue;
       const laneIdx = this.lanes.findIndex(l => l.id === band.lane);
@@ -501,11 +516,10 @@
       this.drawBand(ctx, band, x0, x1, top, rowH, col);
     }
 
-    // Ticks (point events that are not band endpoints)
     const visibleT0 = this.view.t0;
     const visibleT1 = this.view.t0 + w / this.view.pxPerMs;
     for (const e of this.events) {
-      if (e.lane === 'audio_level') continue; // drawn as sparkline
+      if (e.lane === 'audio_level') continue;
       if (this.isLaneHidden(e.lane)) continue;
       if (e.t < visibleT0 - 10 || e.t > visibleT1 + 10) continue;
       const laneIdx = this.lanes.findIndex(l => l.id === e.lane);
@@ -516,10 +530,8 @@
       this.drawTick(ctx, e, x, laneY[laneIdx], laneH[laneIdx], col);
     }
 
-    // LLM token labels (overlap-suppressed)
     this.drawLlmTokenLabels(ctx, w, visibleT0, visibleT1);
 
-    // Cursor + selection lines
     if (this.cursorMs != null) {
       const x = Math.round(this.msToPx(this.cursorMs)) + 0.5;
       ctx.strokeStyle = 'rgba(200,176,142,0.35)';
@@ -533,7 +545,6 @@
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, h); ctx.stroke();
     }
 
-    // Playhead marker on top of everything
     if (this.playheadMs != null) {
       const x = Math.round(this.msToPx(this.playheadMs)) + 0.5;
       ctx.strokeStyle = '#F2EDE4';
@@ -590,7 +601,6 @@
     const samples = this.events.filter(e => e.lane === 'audio_level');
     if (!samples.length) return;
 
-    // Split by channel (mic_in vs tts_out). Missing channel falls back to mic.
     const mic = [], tts = [];
     for (const s of samples) {
       const channel = s.payload && s.payload.channel;
@@ -602,9 +612,9 @@
     const scale = (rms) => Math.min(1, rms / 0.18);
     const midY = y + padY + half;
 
+    // dir: -1 = up from baseline (mic), +1 = down (tts).
     const drawSide = (arr, baselineY, dir, color) => {
       if (!arr.length) return;
-      // dir: -1 = grow upward from baseline (mic); +1 = downward (tts)
       ctx.beginPath();
       let started = false;
       for (const s of arr) {
@@ -630,7 +640,6 @@
     drawSide(mic, midY, -1, pal.vad || '#7A92A8');
     drawSide(tts, midY, +1, pal.tts_chunk || '#B88B5A');
 
-    // Centerline (silence floor)
     ctx.strokeStyle = '#232323';
     ctx.beginPath();
     ctx.moveTo(0, Math.round(midY) + 0.5);
@@ -638,9 +647,6 @@
     ctx.stroke();
   };
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // 7. Band drawing
-  // ─────────────────────────────────────────────────────────────────────────
   Timeline.prototype.drawBand = function (ctx, band, x0, x1, top, rowH, col) {
     const isErr = band.kind === 'phrase_error';
     const w = Math.max(2, x1 - x0);
@@ -659,10 +665,10 @@
     ctx.fillStyle = col + '40';
     ctx.fillRect(x0, top, w, rowH);
     ctx.fillStyle = col;
-    ctx.fillRect(x0, top, 2, rowH);                                // left edge
-    if (!band.ongoing) ctx.fillRect(x1 - 2, top, 2, rowH);         // right edge
+    ctx.fillRect(x0, top, 2, rowH);
+    if (!band.ongoing) ctx.fillRect(x1 - 2, top, 2, rowH);
     ctx.globalAlpha = 0.85;
-    ctx.fillRect(x0, top, w, 1.5);                                 // top rail
+    ctx.fillRect(x0, top, w, 1.5);
     ctx.globalAlpha = 1;
     this.drawBandLabel(ctx, band, x0, top, w, rowH, col);
   };
@@ -674,8 +680,7 @@
     ctx.font = '11px ui-monospace, monospace';
     ctx.textBaseline = 'middle';
     ctx.fillStyle = '#F2EDE4';
-    // Sticky labels (STT utterance, LLM response, TTS chunk) carry along the viewport
-    // edge while their band extends off-screen left; everything else stays glued to x0.
+    // Sticky labels (STT, LLM, TTS) track the left viewport edge when the band scrolls off.
     const sticky = (band.lane === 'stt' && band.kind === 'utterance')
                 || (band.lane === 'llm' && band.kind === 'response')
                 || (band.lane === 'tts_chunk');
@@ -694,8 +699,10 @@
         const ms = band.open.payload?.duration_ms || Math.round(band.t1 - band.t0);
         return `[audio direct · ${ms}ms]`;
       }
-      const t = band.open.payload?.text || '';
-      return `"${t}"`;
+      const p = band.open.payload || {};
+      const t = p.text || '';
+      const ns = p.avg_no_speech_prob;
+      return ns != null ? `"${t}" · ns ${ns}` : `"${t}"`;
     }
     if (band.lane === 'llm' && band.kind === 'response') {
       const ttft = band.close?.payload?.elapsed_ms ?? (band.t1 - band.t0);
@@ -712,6 +719,12 @@
       return band.open.payload?.text || '';
     }
     if (band.lane === 'tts_req' && band.kind === 'phrase_error') return '✕ error · worker closed';
+    if (band.lane === 'bargein') {
+      const ms = Math.round(band.t1 - band.t0);
+      if (band.kind === 'fired') return `barge-in fired · ${ms}ms`;
+      if (band.kind === 'cancelled') return `false start · ${ms}ms`;
+      return `pending · ${ms}ms`;
+    }
     if (band.lane === 'tts_chunk') {
       const p = band.open.payload || {};
       const phraseId = band.corr?.phrase_id;
@@ -719,18 +732,36 @@
       const ms = p.ms_audio || 0;
       return text ? `${text} · ${ms}ms` : `chunk #${p.chunk_idx || 0} · ${ms}ms`;
     }
+    if (band.lane === 'tool') {
+      const name = band.open.payload?.name || 'tool';
+      // Prefer the closing event's payload, in informativeness order:
+      //   summary > start_summary > result > args.
+      if (band.close?.kind === 'summary') {
+        const summary = band.close.payload?.summary;
+        if (summary) return `${name} · ${String(summary).slice(0, 80)}`;
+      }
+      if (band.close?.kind === 'start_summary') return `${name} · narrating…`;
+      if (band.close?.kind === 'result') {
+        const result = band.close.payload?.result;
+        if (result) return `${name} · ${String(result).slice(0, 60)}`;
+      }
+      const args = band.open.payload?.args;
+      if (args && typeof args === 'object') {
+        const compact = JSON.stringify(args);
+        return `${name}(${compact.length > 60 ? compact.slice(0, 60) + '…' : compact})`;
+      }
+      return name;
+    }
     return '';
   };
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // 8. Tick drawing
-  // ─────────────────────────────────────────────────────────────────────────
   const IMPORTANT_KINDS = new Set([
     'first_token', 'pending_start',
     'error', 'dropped', 'raised', 'bargein_missed',
     'partial', 'final',
     'user_committed', 'turn_start', 'turn_end',
     'phrase_boundary',
+    'use_token', 'result', 'start_summary', 'summary',
   ]);
 
   Timeline.prototype.drawTick = function (ctx, e, x, y, laneH, col) {
@@ -776,9 +807,6 @@
     }
   };
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // 9. Minimap + gutter
-  // ─────────────────────────────────────────────────────────────────────────
   Timeline.prototype.drawMinimap = function () {
     const c = this.mmCanvas, ctx = c.getContext('2d');
     ctx.setTransform(this._dpr, 0, 0, this._dpr, 0, 0);
@@ -861,11 +889,7 @@
     });
   };
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // 10. Hit-test — tick first (within tolerance), then band endpoints
-  // ─────────────────────────────────────────────────────────────────────────
   Timeline.prototype.hitTest = function (px, py) {
-    // Walk cumulative lane heights to locate the lane under py.
     let laneIdx = -1, laneY = 0, laneH = 0;
     for (let i = 0, y = 0; i < this.lanes.length; i++) {
       const hh = this.laneHeight(this.lanes[i].id);
@@ -878,7 +902,6 @@
     const tMs = this._pxToMs(px);
     const tolMs = 6 / this.view.pxPerMs;
 
-    // For tts_chunk, restrict the band search to the sub-row under py.
     let chunkRow = null;
     if (laneId === 'tts_chunk') {
       const localY = py - laneY;
@@ -888,10 +911,7 @@
     }
     const band = findBandAt(this.bands, laneId, tMs, tolMs, chunkRow);
 
-    // Progressive bands (STT utterance, LLM response, response assembly, TTS chunk):
-    // pick whichever is closest in time among { latest progressive event, band.open,
-    // band.close } so that hovering near the band's start/end still surfaces its
-    // bracketing endpoints rather than getting stuck on the last chunk.
+    // Progressive bands: prefer whichever of {latest progressive event, band.open, band.close} is closest in time.
     if (band && isProgressiveBand(band)) {
       const candidates = [];
       const progressive = progressiveHit(this.events, band, tMs);
@@ -907,7 +927,6 @@
       return best;
     }
 
-    // Default: nearest tick within tolerance, else band endpoints.
     let best = null, bestDist = Infinity;
     for (const e of this.events) {
       if (e.lane !== laneId) continue;
@@ -919,9 +938,6 @@
     return band ? pickBandEndpoint(band, tMs) : null;
   };
 
-  // Find the band under tMs on `laneId`: strict containment wins, otherwise the
-  // band whose center is closest among those within tolerance. For tts_chunk the
-  // search is restricted to the sub-row under the cursor.
   function findBandAt(bands, laneId, tMs, tolMs, row = null) {
     let containing = null;
     let nearest = null, nearestDist = Infinity;
@@ -950,8 +966,6 @@
         || (band.lane === 'tts_chunk');
   }
 
-  // The "latest state" event inside a progressive band, scoped by correlation id.
-  // For tts_chunk each band is already a single chunk, so band.open IS that event.
   function progressiveHit(events, band, tMs) {
     if (band.lane === 'tts_chunk') return band.open;
     let kinds, scopeField;
@@ -971,9 +985,6 @@
     return latest;
   }
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // 11. View commands
-  // ─────────────────────────────────────────────────────────────────────────
   Timeline.prototype.zoomAtPx = function (px, factor) {
     const t = this._pxToMs(px);
     this.view.pxPerMs = Math.max(0.01, Math.min(6, this.view.pxPerMs * factor));
@@ -1010,9 +1021,6 @@
   Timeline.prototype.setTreatment = function (t) { this.treatment = t; this.draw(); };
   Timeline.prototype.setPalette = function (p) { this.palette = p; this.refreshGutterState(); this.draw(); };
 
-  // ─────────────────────────────────────────────────────────────────────────
-  // 12. Formatters & helpers
-  // ─────────────────────────────────────────────────────────────────────────
   function niceStep(ms) {
     const safe = Math.max(0.001, ms);
     const exp = Math.pow(10, Math.floor(Math.log10(safe)));
@@ -1034,6 +1042,7 @@
     if (e.lane === 'response'  && (e.kind === 'plan_start' || e.kind === 'done')) return true;
     if (e.lane === 'tts_chunk' && (e.kind === 'chunk' || e.kind === 'first_chunk')) return true;
     if (e.lane === 'stt'       && e.kind === 'audio_direct') return true;
+    if (e.lane === 'bargein'   && (e.kind === 'bargein_pending' || e.kind === 'bargein_fired' || e.kind === 'bargein_cancelled')) return true;
     return false;
   }
 

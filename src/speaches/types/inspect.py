@@ -12,6 +12,7 @@ LaneId = Literal[
     "bargein",
     "llm",
     "response",
+    "tool",
     "tts_req",
     "tts_chunk",
     "wire",

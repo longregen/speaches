@@ -2,12 +2,22 @@ from __future__ import annotations
 
 import contextlib
 import json as _json
+import logging
 from pathlib import Path
 import struct
 from typing import TYPE_CHECKING, Annotated, cast
 
 import anyio
-from fastapi import APIRouter, HTTPException, Query, Response, WebSocket, WebSocketException, status
+from fastapi import (
+    APIRouter,
+    HTTPException,
+    Query,
+    Response,
+    WebSocket,
+    WebSocketDisconnect,
+    WebSocketException,
+    status,
+)
 from fastapi.responses import StreamingResponse
 
 from speaches.dependencies import ConfigDependency, ExecutorRegistryDependency  # noqa: TC001
@@ -20,6 +30,8 @@ if TYPE_CHECKING:
 
     from speaches.config import Config
     from speaches.inspect.audio_store import Channel
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["inspect"])
 
@@ -76,7 +88,6 @@ _SAMPLE_RATES: dict[str, int] = {"mic_in": 16000, "tts_out": 24000}
 
 
 def _wav_header(num_samples: int, sample_rate: int) -> bytes:
-    # PCM16 mono WAV header
     byte_rate = sample_rate * 2
     block_align = 2
     data_bytes = num_samples * 2
@@ -103,7 +114,6 @@ async def get_audio(
         raise HTTPException(status_code=400, detail="invalid channel")
     sr = _SAMPLE_RATES[channel]
 
-    # Try live session first; fall back to disk recording.
     ctx = registry.get_ctx(sid)
     pcm: bytes
     audio_store = getattr(ctx, "audio_store", None) if ctx is not None else None
@@ -150,7 +160,6 @@ async def inspect_stream(websocket: WebSocket, sid: str, config: ConfigDependenc
 
     relay = registry.get_relay(sid)
     if relay is None:
-        # Try history — stream the file in one shot, then close.
         path = _session_dir(config) / f"{sid}.ndjson"
         if path.is_file():
             async with await anyio.open_file(path, "rb") as f:
@@ -164,7 +173,10 @@ async def inspect_stream(websocket: WebSocket, sid: str, config: ConfigDependenc
                 if line:
                     try:
                         await websocket.send_bytes(line)
-                    except Exception:  # noqa: BLE001
+                    except WebSocketDisconnect:
+                        break
+                    except Exception:
+                        logger.exception("inspector replay send failed for sid=%s", sid)
                         break
         await websocket.close(code=status.WS_1000_NORMAL_CLOSURE)
         return
@@ -172,8 +184,10 @@ async def inspect_stream(websocket: WebSocket, sid: str, config: ConfigDependenc
     try:
         async for line in relay.subscribe():
             await websocket.send_bytes(line)
-    except Exception:  # noqa: BLE001, S110
+    except WebSocketDisconnect:
         pass
+    except Exception:
+        logger.exception("inspector live stream failed for sid=%s", sid)
     finally:
         with contextlib.suppress(Exception):
             await websocket.close()

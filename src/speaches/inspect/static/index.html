@@ -51,33 +51,30 @@
 <link rel="stylesheet" href="design/colors_and_type.css">
 <style>
   :root {
-    /* Dev-tool overrides on top of design tokens */
-    --bg-chrome:       #1E1E1E;  /* --color-background */
-    --bg-canvas:       #181818;  /* deeper than surface for the timeline floor */
+    --bg-chrome:       #1E1E1E;
+    --bg-canvas:       #181818;
     --bg-panel:        #252525;
     --bg-panel-2:      #2D2D2D;
     --bg-lane-alt:     #1C1C1C;
     --bg-rail:         #151515;
-    --hair:            #2E2E2E;  /* softer than --color-border */
+    --hair:            #2E2E2E;
     --hair-2:          #3D3D3D;
     --fg:              #F2EDE4;
     --fg-dim:          #9B9590;
     --fg-faint:        #5E5954;
-    --accent:          #A8906A;  /* bronze */
-    --cursor:          #C8B08E;  /* bronze light */
+    --accent:          #A8906A;
+    --cursor:          #C8B08E;
     --selection-fill:  rgba(168, 144, 106, 0.18);
     --selection-stroke:#C8B08E;
 
-    /* Lane semantic colors (dark-mode tints of accents + two extra) */
-    --lane-vad:        #7A92A8;  /* slate blue */
-    --lane-stt:        #7F9B7F;  /* sage */
-    --lane-llm:        #A8906A;  /* bronze */
-    --lane-tts-req:    #C4A45A;  /* amber */
-    --lane-tts-chunk:  #B88B5A;  /* warm amber-bronze */
-    --lane-wire:       #9B9590;  /* warm gray */
-    --lane-error:      #B88080;  /* scarlet */
+    --lane-vad:        #7A92A8;
+    --lane-stt:        #7F9B7F;
+    --lane-llm:        #A8906A;
+    --lane-tts-req:    #C4A45A;
+    --lane-tts-chunk:  #B88B5A;
+    --lane-wire:       #9B9590;
+    --lane-error:      #B88080;
 
-    /* Density (set via data-density) */
     --lane-h: 46px;
     --lane-pad: 8px;
     --row-gap: 0px;
@@ -96,14 +93,12 @@
     overflow: hidden;
   }
 
-  /* ---------- App shell ---------- */
   .app {
     display: grid;
     grid-template-rows: auto 1fr;
     height: 100vh;
   }
 
-  /* ---------- Top bar ---------- */
   .topbar {
     display: flex;
     align-items: center;
@@ -192,7 +187,6 @@
   .btn[aria-pressed="true"] { color: var(--fg); background: rgba(168,144,106,0.14); }
   .btn .kbd { color: var(--fg-faint); font-family: var(--font-mono); font-size: 10px; }
 
-  /* ---------- Main layout ---------- */
   .main {
     display: grid;
     grid-template-columns: 1fr 360px;
@@ -206,7 +200,7 @@
     background: var(--bg-canvas);
     overflow: hidden;
     display: grid;
-    grid-template-rows: 28px 1fr 56px 28px;  /* ruler, lanes, minimap, status */
+    grid-template-rows: 28px 1fr 56px 28px;
     min-width: 0;
   }
   .inspector {
@@ -217,7 +211,6 @@
     min-height: 0;
   }
 
-  /* Ruler */
   .ruler {
     position: relative;
     background: var(--bg-rail);
@@ -227,7 +220,6 @@
   }
   .ruler canvas { display: block; width: 100%; height: 100%; }
 
-  /* Lane zone (holds lane-gutter + canvas) */
   .lanes {
     position: relative;
     display: grid;
@@ -292,7 +284,6 @@
     cursor: crosshair;
   }
 
-  /* Minimap */
   .minimap {
     background: var(--bg-rail);
     border-top: 1px solid var(--hair);
@@ -315,7 +306,6 @@
   .minimap .mm-wrap { flex: 1 1 auto; position: relative; min-width: 0; }
   .minimap canvas { display: block; width: 100%; height: 100%; cursor: ew-resize; }
 
-  /* Status bar */
   .statusbar {
     display: flex; align-items: center; gap: 20px;
     padding: 0 16px;
@@ -329,7 +319,6 @@
   .statusbar .sep { width: 1px; height: 14px; background: var(--hair-2); }
   .statusbar .right { margin-left: auto; display: flex; gap: 18px; }
 
-  /* ---------- Inspector panel ---------- */
   .insp-head {
     padding: 14px 16px 10px;
     border-bottom: 1px solid var(--hair);
@@ -466,7 +455,6 @@
   }
   .insp-foot .copy:hover { border-color: var(--accent); color: var(--accent); }
 
-  /* ---------- Tweaks panel ---------- */
   .tweaks {
     position: fixed;
     right: 378px;
@@ -535,7 +523,6 @@
     color: var(--fg);
   }
 
-  /* Tweaks FAB (shown when tweak-mode is on) */
   .tweaks-fab {
     position: fixed;
     right: 378px;
@@ -559,7 +546,6 @@
   .tweak-mode .tweaks-fab { display: inline-flex; }
   .tweaks-fab .dot { width: 6px; height: 6px; border-radius: 999px; background: var(--accent); }
 
-  /* Tooltip */
   .tooltip {
     position: fixed;
     background: var(--bg-panel-2);
@@ -589,7 +575,6 @@
   .tooltip .t-row { display: grid; grid-template-columns: 70px 1fr; gap: 8px; line-height: 1.5; }
   .tooltip .t-row > span:last-child { white-space: pre-wrap; word-break: break-word; overflow-wrap: anywhere; }
 
-  /* Scrollbars */
   ::-webkit-scrollbar { width: 10px; height: 10px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb {
@@ -608,10 +593,8 @@
     color: var(--fg-dim);
   }
 
-  /* Lane gutter shows which lane is hovered */
   .lane-label.hovered { background: rgba(255,255,255,0.04); }
 
-  /* ---------- Client badge ---------- */
   .client-badge {
     gap: 8px;
     font-weight: 600;
@@ -638,7 +621,6 @@
     margin-left: 4px;
   }
 
-  /* ---------- Settings sidebar (live session.update) ---------- */
   .settings-panel {
     background: var(--bg-panel);
     border-left: 1px solid var(--hair);
@@ -744,7 +726,6 @@
 <body data-screen-label="01 Inspector">
 <div class="app">
 
-  <!-- Top bar -->
   <div class="topbar">
     <div class="brand-stack">
       <div class="brand">
@@ -777,7 +758,6 @@
       </button>
     </div>
 
-    <!-- Audio channels (visible during replay) -->
     <div class="btngroup hidden" id="audioChannelsWrap">
       <button class="btn" id="btnChMic" aria-pressed="true" title="Mic-in channel">
         <span class="dot inline-dot inline-dot--user"></span>
@@ -808,25 +788,20 @@
 
   </div>
 
-  <!-- Main split -->
   <div class="main">
     <div class="timeline-wrap">
-      <!-- Ruler -->
       <div class="ruler" id="ruler"><canvas id="rulerCanvas"></canvas></div>
 
-      <!-- Lanes -->
       <div class="lanes">
         <div class="lane-gutter" id="laneGutter"></div>
         <div class="tl-canvas-wrap" id="tlWrap"><canvas id="tlCanvas"></canvas></div>
       </div>
 
-      <!-- Minimap -->
       <div class="minimap">
         <div class="legend">Minimap · full session</div>
         <div class="mm-wrap"><canvas id="mmCanvas"></canvas></div>
       </div>
 
-      <!-- Status bar -->
       <div class="statusbar">
         <span>events <b id="stEvents">0</b></span>
         <span class="sep"></span>
@@ -843,7 +818,6 @@
       </div>
     </div>
 
-    <!-- Inspector panel -->
     <aside class="inspector">
       <div class="insp-head">
         <div class="eyebrow" id="iEyebrow">Selected event</div>
@@ -874,7 +848,6 @@
       </div>
     </aside>
 
-    <!-- Live session settings sidebar -->
     <aside class="settings-panel" id="settingsPanel" aria-label="Session settings">
       <div class="settings-header">
         <div>
@@ -906,9 +879,13 @@
             </div>
           </div>
           <div class="prompt-wrap">
+            <div class="field stack">
+              <label for="audioDirectModel">Audio model <span class="unit">session.audio_direct_model</span></label>
+              <input type="text" id="audioDirectModel" value="gemma-4-e4b-it" spellcheck="false">
+            </div>
             <div class="field row-full">
               <label for="audioDirectPrompt">Direct-audio prompt <span class="unit">session.audio_direct_prompt</span></label>
-              <textarea id="audioDirectPrompt" rows="3" placeholder="Transcribe and respond to the audio...">You are a helpful voice assistant. The user's audio is attached; respond naturally.</textarea>
+              <textarea id="audioDirectPrompt" rows="3" placeholder="Leave empty to send audio only (no text prompt)."></textarea>
             </div>
           </div>
         </section>
@@ -971,7 +948,6 @@
   </div>
 </div>
 
-<!-- Tweaks FAB + panel -->
 <button class="tweaks-fab" id="tweakFab" aria-label="Open tweaks">
   <span class="dot"></span> Tweaks
 </button>
@@ -1043,7 +1019,6 @@
 
 <div class="tooltip" id="tooltip"></div>
 
-<!-- Tweak defaults (persisted to localStorage by app.js) -->
 <script>
   (function () {
     var fallback = {
