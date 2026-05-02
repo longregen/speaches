@@ -786,13 +786,35 @@
     if (p.ms_audio != null) rows.push(['ms_audio', p.ms_audio]);
     if (p.reason) rows.push(['reason', p.reason]);
     if (p.error) rows.push(['error', shorten(p.error, 600)]);
+    const fmt = v => (typeof v === 'number' ? (Math.abs(v) < 1e-3 ? v.toExponential(2) : v.toFixed(3)) : v);
     if (p.avg_no_speech_prob != null) {
-      const parts = [`avg ${p.avg_no_speech_prob}`];
-      if (p.min_no_speech_prob != null) parts.push(`min ${p.min_no_speech_prob}`);
-      if (p.max_no_speech_prob != null) parts.push(`max ${p.max_no_speech_prob}`);
+      const parts = [`avg ${fmt(p.avg_no_speech_prob)}`];
+      if (p.min_no_speech_prob != null) parts.push(`min ${fmt(p.min_no_speech_prob)}`);
+      if (p.max_no_speech_prob != null) parts.push(`max ${fmt(p.max_no_speech_prob)}`);
       if (p.no_speech_prob_threshold != null) parts.push(`thr ${p.no_speech_prob_threshold}`);
       else if (p.threshold != null) parts.push(`thr ${p.threshold}`);
       rows.push(['no_speech', parts.join(' · ')]);
+    }
+    if (p.avg_logprob != null) {
+      const parts = [`avg ${fmt(p.avg_logprob)}`];
+      if (p.min_logprob != null) parts.push(`min ${fmt(p.min_logprob)}`);
+      if (p.max_logprob != null) parts.push(`max ${fmt(p.max_logprob)}`);
+      if (p.effective_avg_logprob_threshold != null) {
+        const base = p.avg_logprob_threshold;
+        const eff = p.effective_avg_logprob_threshold;
+        const dur = p.audio_duration_ms;
+        const baseStr = base != null && base !== eff ? ` (base ${base}` + (dur != null ? ` @ ${dur}ms` : '') + ')' : '';
+        parts.push(`thr ${fmt(eff)}${baseStr}`);
+      } else if (p.avg_logprob_threshold != null) {
+        parts.push(`thr ${p.avg_logprob_threshold}`);
+      }
+      rows.push(['logprob', parts.join(' · ')]);
+    }
+    if (p.avg_compression_ratio != null) {
+      const parts = [`avg ${fmt(p.avg_compression_ratio)}`];
+      if (p.min_compression_ratio != null) parts.push(`min ${fmt(p.min_compression_ratio)}`);
+      if (p.max_compression_ratio != null) parts.push(`max ${fmt(p.max_compression_ratio)}`);
+      rows.push(['compression', parts.join(' · ')]);
     }
 
     const c = e.corr || {};

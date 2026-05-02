@@ -17,6 +17,7 @@ def create_session_object_configuration(
     transcription_model: str | None = None,
     default_realtime_stt_model: str = "Systran/faster-distil-whisper-small.en",
     no_speech_prob_threshold: float | None = 0.6,
+    avg_logprob_threshold: float | None = -0.6,
 ) -> Session:
     # References:
     # - https://platform.openai.com/docs/guides/realtime/overview
@@ -60,4 +61,5 @@ def create_session_object_configuration(
         tool_choice="auto",
         max_response_output_tokens="inf",
         no_speech_prob_threshold=no_speech_prob_threshold,
+        avg_logprob_threshold=avg_logprob_threshold,
     )

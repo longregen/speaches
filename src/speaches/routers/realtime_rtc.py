@@ -311,6 +311,7 @@ async def realtime_webrtc(
             None,
             config.default_realtime_stt_model,
             config.default_no_speech_prob_threshold,
+            config.default_avg_logprob_threshold,
         ),
     )
     from pathlib import Path as _Path

@@ -143,6 +143,7 @@ async def realtime(
         transcription_model,
         config.default_realtime_stt_model,
         config.default_no_speech_prob_threshold,
+        config.default_avg_logprob_threshold,
     )
     if instructions is not None:
         session.instructions = instructions

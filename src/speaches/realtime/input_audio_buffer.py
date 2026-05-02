@@ -37,7 +37,28 @@ MAX_VAD_WINDOW_SIZE_SAMPLES = 3000 * MS_SAMPLE_RATE
 MAX_BUFFER_SIZE_SAMPLES = 30 * 60 * SAMPLE_RATE  # 30 minutes
 _INITIAL_CAPACITY = 3200  # 200ms at 16kHz, ~12.5 KiB
 
+# Duration-aware avg_logprob gate. Short audio is the highest-risk territory
+# for whisper noise hallucinations (cough -> 'Bye.', breath -> 'Hmm.'); for
+# clips at or under FULL_MS we apply the configured base threshold as-is.
+# Once the VAD-held speech extends past FULL_MS, real-speech becomes more
+# likely with each additional second, so we relax the threshold linearly
+# toward LOOSE_FLOOR. At or above OFF_MS the gate is disabled outright.
+_AVG_LOGPROB_GATE_FULL_MS = 1500
+_AVG_LOGPROB_GATE_OFF_MS = 5000
+_AVG_LOGPROB_GATE_LOOSE_FLOOR = -3.0
+
 logger = logging.getLogger(__name__)
+
+
+def _effective_avg_logprob_threshold(base: float | None, duration_ms: int) -> float | None:
+    if base is None:
+        return None
+    if duration_ms <= _AVG_LOGPROB_GATE_FULL_MS:
+        return base
+    if duration_ms >= _AVG_LOGPROB_GATE_OFF_MS:
+        return None
+    frac = (duration_ms - _AVG_LOGPROB_GATE_FULL_MS) / (_AVG_LOGPROB_GATE_OFF_MS - _AVG_LOGPROB_GATE_FULL_MS)
+    return base + frac * (_AVG_LOGPROB_GATE_LOOSE_FLOOR - base)
 
 
 class VadState(BaseModel):
@@ -217,12 +238,21 @@ class InputAudioBufferTranscriber:
             raise
         elapsed = time.perf_counter() - start
 
-        # Stats are emitted on every accepted turn too, so operators can read the
-        # inspector to pick a threshold instead of guessing.
+        # Per-segment whisper signals. Stats are emitted on every accepted turn
+        # too so operators can read the inspector to pick thresholds.
         avg_no_speech: float | None = None
         min_no_speech: float | None = None
         max_no_speech: float | None = None
-        threshold = self.session.no_speech_prob_threshold
+        avg_logprob: float | None = None
+        min_logprob: float | None = None
+        max_logprob: float | None = None
+        avg_compression: float | None = None
+        min_compression: float | None = None
+        max_compression: float | None = None
+        nsp_threshold = self.session.no_speech_prob_threshold
+        logprob_threshold = self.session.avg_logprob_threshold
+        audio_duration_ms = int(len(self.input_audio_buffer.data_w_vad_applied) * 1000 / SAMPLE_RATE)
+        effective_logprob_threshold = _effective_avg_logprob_threshold(logprob_threshold, audio_duration_ms)
         if isinstance(result, openai.types.audio.TranscriptionVerbose):
             transcript = result.text
             if result.segments:
@@ -230,19 +260,46 @@ class InputAudioBufferTranscriber:
                 avg_no_speech = sum(probs) / len(probs)
                 min_no_speech = min(probs)
                 max_no_speech = max(probs)
-            if threshold is not None and avg_no_speech is not None and avg_no_speech > threshold:
+                lps = [s.avg_logprob for s in result.segments]
+                avg_logprob = sum(lps) / len(lps)
+                min_logprob = min(lps)
+                max_logprob = max(lps)
+                crs = [s.compression_ratio for s in result.segments]
+                avg_compression = sum(crs) / len(crs)
+                min_compression = min(crs)
+                max_compression = max(crs)
+            nsp_fail = nsp_threshold is not None and avg_no_speech is not None and avg_no_speech > nsp_threshold
+            logprob_fail = (
+                effective_logprob_threshold is not None
+                and avg_logprob is not None
+                and avg_logprob < effective_logprob_threshold
+            )
+            if nsp_fail or logprob_fail:
+                reason = "no_speech_prob" if nsp_fail else "avg_logprob"
                 logger.info(
-                    f"Noise gate: discarding audio (avg_no_speech_prob={avg_no_speech:.3f} > {threshold}, "
+                    f"Noise gate ({reason}): discarding audio "
+                    f"(avg_no_speech_prob={avg_no_speech} thr={nsp_threshold}, "
+                    f"avg_logprob={avg_logprob} thr={effective_logprob_threshold} (base={logprob_threshold}, dur={audio_duration_ms}ms), "
                     f"transcript={transcript!r}, elapsed={elapsed:.2f}s)"
                 )
                 inspect_emit.emit(
                     "stt",
                     "rejected_noise",
                     text=transcript,
-                    avg_no_speech_prob=round(avg_no_speech, 4),
-                    min_no_speech_prob=round(min_no_speech, 4) if min_no_speech is not None else None,
-                    max_no_speech_prob=round(max_no_speech, 4) if max_no_speech is not None else None,
-                    threshold=threshold,
+                    reason=reason,
+                    avg_no_speech_prob=avg_no_speech,
+                    min_no_speech_prob=min_no_speech,
+                    max_no_speech_prob=max_no_speech,
+                    no_speech_prob_threshold=nsp_threshold,
+                    avg_logprob=avg_logprob,
+                    min_logprob=min_logprob,
+                    max_logprob=max_logprob,
+                    avg_logprob_threshold=logprob_threshold,
+                    effective_avg_logprob_threshold=effective_logprob_threshold,
+                    audio_duration_ms=audio_duration_ms,
+                    avg_compression_ratio=avg_compression,
+                    min_compression_ratio=min_compression,
+                    max_compression_ratio=max_compression,
                     elapsed_ms=int(elapsed * 1000),
                 )
                 self.pubsub.publish_nowait(
@@ -317,10 +374,19 @@ class InputAudioBufferTranscriber:
             audio_start_ms=audio_start_ms,
             audio_end_ms=audio_end_ms,
             elapsed_ms=int(elapsed * 1000),
-            avg_no_speech_prob=round(avg_no_speech, 4) if avg_no_speech is not None else None,
-            min_no_speech_prob=round(min_no_speech, 4) if min_no_speech is not None else None,
-            max_no_speech_prob=round(max_no_speech, 4) if max_no_speech is not None else None,
-            no_speech_prob_threshold=threshold,
+            avg_no_speech_prob=avg_no_speech,
+            min_no_speech_prob=min_no_speech,
+            max_no_speech_prob=max_no_speech,
+            no_speech_prob_threshold=nsp_threshold,
+            avg_logprob=avg_logprob,
+            min_logprob=min_logprob,
+            max_logprob=max_logprob,
+            avg_logprob_threshold=logprob_threshold,
+            effective_avg_logprob_threshold=effective_logprob_threshold,
+            audio_duration_ms=audio_duration_ms,
+            avg_compression_ratio=avg_compression,
+            min_compression_ratio=min_compression,
+            max_compression_ratio=max_compression,
         )
         inspect_emit.emit("turn", "user_committed", item_id=item.id)
         self.pubsub.publish_nowait(

@@ -353,6 +353,10 @@ class Session(BaseModel):
     no_response_token: str | None = "*"  # noqa: S105
     # Server-side extension, not part of OpenAI Realtime API
     no_speech_prob_threshold: float | None = Field(default=0.6, ge=0.0, le=1.0)
+    # Server-side extension, not part of OpenAI Realtime API. Whisper avg_logprob
+    # gate: real short responses sit -0.30..-0.50; textbook hallucinations on
+    # noise ('Oh.', 'Mmm.') sit -0.70..-1.05. Drop turn if avg < threshold.
+    avg_logprob_threshold: float | None = Field(default=-0.6, le=0.0)
     output_audio_format: AudioFormat
     temperature: float  # TODO: should there be lower and upper bounds?
     tool_choice: ToolChoice
@@ -389,6 +393,8 @@ class PartialSession(BaseModel):
     no_response_token: str | None | NotGiven = NOT_GIVEN
     # Server-side extension, not part of OpenAI Realtime API
     no_speech_prob_threshold: Annotated[float, Field(ge=0.0, le=1.0)] | None | NotGiven = NOT_GIVEN
+    # Server-side extension, not part of OpenAI Realtime API
+    avg_logprob_threshold: Annotated[float, Field(le=0.0)] | None | NotGiven = NOT_GIVEN
     output_audio_format: AudioFormat | NotGiven = NOT_GIVEN
     temperature: float | NotGiven = NOT_GIVEN
     tool_choice: ToolChoice | NotGiven = NOT_GIVEN

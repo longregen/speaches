@@ -230,6 +230,20 @@ class Config(BaseSettings):
     by default. Set via DEFAULT_NO_SPEECH_PROB_THRESHOLD environment variable.
     """
 
+    default_avg_logprob_threshold: float | None = Field(default=-0.6, le=0.0)
+    """
+    Default Whisper avg_logprob threshold used as a second-stage gate after
+    VAD in the realtime API. If the average avg_logprob across a
+    transcription's segments is below (more negative than) this value, the
+    turn is dropped. Tuned from production inspector data: real short
+    utterances ('Hello?', 'All right.', 'Okay.') land at -0.30 to -0.50;
+    textbook whisper hallucinations on noise ('Oh.', 'Mmm.', 'you', 'Bye.')
+    cluster at -0.70 to -1.05. -0.6 catches the deep hallucinations without
+    suppressing legitimate short responses or wake phrases. Clients can
+    override per-session via session.update. Set to None to disable. Set via
+    DEFAULT_AVG_LOGPROB_THRESHOLD environment variable.
+    """
+
     qwen3_tts_default_voice: str = "Ryan"
     """
     Default preset speaker for the Qwen3-TTS CustomVoice variants when the
