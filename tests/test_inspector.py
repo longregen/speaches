@@ -1,14 +1,3 @@
-"""Integration test for the realtime session inspector.
-
-Assumes a running speaches server on ``SPEACHES_PORT`` with:
-- ``CHAT_COMPLETION_BASE_URL=http://127.0.0.1:18001/v1`` (mock LLM)
-- ``INSPECT_SESSION_DIR`` pointing at a writable dir
-
-Mirrors the existing ``tests/e2e_realtime.py`` pattern (mock LLM in a thread
-plus a realtime WS client). Adds a second WebSocket subscribed to
-``/v1/inspect/{sid}/stream`` and asserts the event surface is healthy.
-"""
-
 from __future__ import annotations
 
 import asyncio

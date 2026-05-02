@@ -95,7 +95,6 @@ def test_add_output_item_exception_cleanup() -> None:
     with pytest.raises(ValueError, match="something broke"), handler.add_output_item(item):
         raise ValueError("something broke")
 
-    # Even with an exception, finally block should fire
     event_types = _drain_event_types(q)
     assert "response.output_item.done" in event_types
 

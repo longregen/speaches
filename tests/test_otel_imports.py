@@ -21,9 +21,6 @@ def test_otel_instrumentation_importable(module_name: str) -> None:
 def test_otel_util_http_has_expected_exports() -> None:
     from opentelemetry.util import http as util_http
 
-    # These are the symbols that opentelemetry-instrumentation-httpx and
-    # opentelemetry-instrumentation-fastapi import at module level.
-    # A mismatch here is exactly what caused the production crash.
     expected = [
         "ExcludeList",
         "get_excluded_urls",

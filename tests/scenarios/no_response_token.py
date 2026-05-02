@@ -58,11 +58,9 @@ async def run_no_response_token_test() -> bool:
                 f"no audio deltas generated for dismissed response ({len(audio_deltas)} found)",
             )
 
-            # After response.done, conversation items should be deleted (message clearing)
             delete_events = await collect_events_until(
                 ws, "conversation.item.deleted", timeout_seconds=10, fail_on_timeout=False
             )
-            # We expect at least one deletion (the assistant item)
             deleted_items = [e for e in delete_events if e["type"] == "conversation.item.deleted"]
             checker.check(
                 len(deleted_items) >= 1,

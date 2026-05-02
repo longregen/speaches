@@ -66,11 +66,9 @@ async def test_ttl_resets_after_usage(aclient_factory: AclientFactory) -> None:
         await asyncio.sleep(ttl - 2)  # sleep for less than the ttl. The model should not be unloaded
         await _wait_for_model_count(aclient, 1)
 
-        # Wait for TTL to expire after last usage, then poll for unload
         await asyncio.sleep(3)
         await _wait_for_model_count(aclient, 0, seconds=15.0)
 
-        # test the model can be used again after being unloaded
         await aclient.post(
             "/v1/audio/transcriptions",
             files={"file": ("audio.wav", data, "audio/wav")},

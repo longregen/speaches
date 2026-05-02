@@ -1,8 +1,3 @@
-"""Shared helpers for realtime e2e scenarios.
-
-Prefixed with underscore so pytest does not collect it as a test module.
-"""
-
 import asyncio
 import base64
 import json
@@ -34,7 +29,6 @@ SPEACHES_URL = f"http://127.0.0.1:{SPEACHES_PORT}"
 WS_BASE_URL = f"ws://127.0.0.1:{SPEACHES_PORT}/v1/realtime"
 WS_URL = f"{WS_BASE_URL}?model=mock-llm&transcription_model=Systran/faster-whisper-base"
 
-# Shared mutable state used by scenarios to control mock LLM behavior.
 received_requests: list[dict[str, Any]] = []
 
 

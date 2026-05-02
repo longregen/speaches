@@ -30,18 +30,13 @@ def test_tool_execution_field_serialization() -> None:
 
 
 def test_tool_execution_field_not_in_function_definition() -> None:
-    """The execution field should NOT leak into the LLM API call.
-
-    The chat_utils.create_completion_params manually constructs
-    FunctionDefinition from name/description/parameters, so the
-    execution field is naturally excluded.
-    """
+    # NOTE: execution must not leak into LLM API calls; chat_utils.create_completion_params
+    # constructs FunctionDefinition from name/description/parameters only.
     tool = Tool(name="weather", description="Get weather", parameters={"type": "object"}, execution="server")
 
     full = tool.model_dump()
     assert "execution" in full
 
-    # But when constructing FunctionDefinition, only name/description/parameters are used
     from openai.types.shared_params.function_definition import FunctionDefinition
 
     fd = FunctionDefinition(name=tool.name, description=tool.description or "", parameters=tool.parameters)

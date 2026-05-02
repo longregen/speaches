@@ -99,13 +99,6 @@ class AudioChatStreamingSessionArchive(BaseModel):
                     assert choice.delta.content is None
         return self
 
-    # TODO: validate
-    # choices: List[Choice]
-    # """A list of chat completion choices.
-    # Can contain more than one elements if `n` is greater than 1. Can also be empty
-    # for the last chunk if you set `stream_options: {"include_usage": true}`.
-    # """
-
     # TODO: validate model is the same across chunks (Actually don't do this)
     # TODO: validate expires at is in 1h
     # TODO: validate audio ids are the same

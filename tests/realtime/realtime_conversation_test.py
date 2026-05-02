@@ -459,7 +459,6 @@ async def _trigger_response_and_get_text(
         ResponseCreateEvent(
             type="response.create",
             response=RealtimeResponseCreateParams(instructions=instructions, output_modalities=["text"]),
-            # response=RealtimeResponseCreateParams(instructions=instructions),
         )
     )
     event = await _recv_until_event_type(recording_connection, "response.done", wait_timeout=wait_timeout)
@@ -504,11 +503,6 @@ async def test_realtime_conversation_item_duplicate_id_replaces_content(endpoint
                 realtime_connection, recording_connection, instructions=instructions
             )
 
-            # On `gpt-4o-realtime-preview`
-            # Observed behavior: the duplicate ID item does not appear in the conversation.
-            # The model only sees the original 5 items — the duplicate is silently ignored.
-            # assert response.strip() == "alpha,bravo,charlie,delta,echo"
-            # On `gpt-realtime-1.5` the item does appear at the end
             assert response.strip() == "alpha,bravo,charlie,delta,echo,REPLACED"
             print(recording_connection.messages)
 
@@ -524,7 +518,6 @@ async def test_realtime_conversation_item_create_with_previous_item_id_root(endp
 
         num_sequence = [-20, 10, 20, 30, 40]
 
-        # Create items 10, 20, 30, 40
         for i in num_sequence[1:]:
             await _create_conversation_item(realtime_connection, recording_connection, text=str(i))
 

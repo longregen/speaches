@@ -88,8 +88,6 @@ class TestVadRingBuffer:
         buf.append(_make_chunk(half + 100, 2.0))
         vad = buf.vad_data
         assert len(vad) == MAX_VAD_WINDOW_SIZE_SAMPLES
-        # After wrapping, the oldest data (1.0) should be at the start,
-        # newest data (2.0) at the end
         assert vad[-1] == 2.0
 
     def test_vad_data_overflow_single_large_chunk(self) -> None:

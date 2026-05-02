@@ -4,7 +4,7 @@ import pytest
 
 MODEL_ID_THAT_EXISTS = "Systran/faster-whisper-tiny.en"
 MODEL_ID_THAT_DOES_NOT_EXIST = "i-do-not-exist"
-MIN_EXPECTED_NUMBER_OF_MODELS = 70  # At the time of the test creation there are 89 models
+MIN_EXPECTED_NUMBER_OF_MODELS = 70
 
 
 # TODO: re-enable this test. Was disabled as `POST /v1/models` only lists local models

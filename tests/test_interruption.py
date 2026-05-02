@@ -93,7 +93,6 @@ async def test_speech_started_listening_stays_listening() -> None:
     await asyncio.sleep(0)
 
     assert ctx.state == ConversationState.LISTENING
-    # Old task should be cancelled and a new one created
     assert existing_task.cancelled()
     assert ctx.partial_transcription_task is not None
     assert ctx.partial_transcription_task is not existing_task
@@ -181,11 +180,9 @@ def test_vad_does_not_produce_duplicate_speech_stopped() -> None:
 
     buf = ctx.audio_buffers.current
 
-    # Simulate: speech already started and stopped
     buf.vad_state.audio_start_ms = 100
     buf.vad_state.audio_end_ms = 900
 
-    # VAD should NOT produce another speech_stopped event
     result = vad_detection_flow(buf, td, ctx)
     assert result is None
 
@@ -212,7 +209,6 @@ async def test_delayed_barge_in_cancelled_by_speech_stopped() -> None:
     handle_input_audio_buffer_speech_stopped(ctx, stopped_event)
 
     assert ctx.barge_in_task is None
-    # stop() should never have been called
     mock_response.stop.assert_not_called()
     assert ctx.state == ConversationState.PROCESSING
 
@@ -234,13 +230,11 @@ async def test_delayed_barge_in_skips_if_response_changed() -> None:
     handle_speech_started_interruption(ctx, event)
     assert ctx.barge_in_task is not None
 
-    # Replace active response before delay fires (simulates a new response starting)
     new_response = MagicMock()
     ctx.response_manager._active = new_response  # noqa: SLF001
 
     await asyncio.sleep(0.1)
 
-    # Old response should NOT be stopped (identity check fails)
     old_response.stop.assert_not_called()
     new_response.stop.assert_not_called()
 
@@ -265,14 +259,11 @@ async def test_second_speech_started_cancels_pending_barge_in() -> None:
     first_barge_in = ctx.barge_in_task
     assert first_barge_in is not None
 
-    # Second speech_started while first is still pending
-    # (state is LISTENING now, so no new barge-in, but the old one should be cancelled)
     event2 = _make_speech_started_event(ctx)
     handle_speech_started_interruption(ctx, event2)
     await asyncio.sleep(0)
 
     assert first_barge_in.cancelled()
-    # No new barge-in since state is now LISTENING (not GENERATING)
     assert ctx.barge_in_task is None
 
     await _cancel_partial(ctx)

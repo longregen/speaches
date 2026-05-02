@@ -35,11 +35,11 @@ async def test_create_speech_formats(openai_client: AsyncOpenAI, response_format
 
 
 GOOD_MODEL_VOICE_PAIRS: list[tuple[str, str]] = [
-    ("tts-1", "alloy"),  # OpenAI and OpenAI
-    ("tts-1-hd", "echo"),  # OpenAI and OpenAI
-    ("tts-1", VOICE_ID),  # OpenAI and Piper
-    (SPEECH_MODEL_ID, "echo"),  # Piper and OpenAI
-    (SPEECH_MODEL_ID, VOICE_ID),  # Piper and Piper
+    ("tts-1", "alloy"),
+    ("tts-1-hd", "echo"),
+    ("tts-1", VOICE_ID),
+    (SPEECH_MODEL_ID, "echo"),
+    (SPEECH_MODEL_ID, VOICE_ID),
 ]
 
 
@@ -57,25 +57,12 @@ async def test_create_speech_good_model_voice_pair(openai_client: AsyncOpenAI, m
 
 
 BAD_MODEL_VOICE_PAIRS: list[tuple[str, str]] = [
-    ("tts-1", "invalid"),  # OpenAI and invalid
-    ("invalid", "echo"),  # Invalid and OpenAI
-    (SPEECH_MODEL_ID, "invalid"),  # Piper and invalid
-    ("invalid", VOICE_ID),  # Invalid and Piper
-    ("invalid", "invalid"),  # Invalid and invalid
+    ("tts-1", "invalid"),
+    ("invalid", "echo"),
+    (SPEECH_MODEL_ID, "invalid"),
+    ("invalid", VOICE_ID),
+    ("invalid", "invalid"),
 ]
-
-
-# @pytest.mark.asyncio
-# @pytest.mark.parametrize(("model", "voice"), BAD_MODEL_VOICE_PAIRS)
-# async def test_create_speech_bad_model_voice_pair(openai_client: AsyncOpenAI, model: str, voice: str) -> None:
-#     # NOTE: not sure why `APIConnectionError` is sometimes raised
-#     with pytest.raises((UnprocessableEntityError, APIConnectionError)):
-#         await openai_client.audio.speech.create(
-#             model=model,
-#             voice=voice,
-#             input=DEFAULT_INPUT,
-#             response_format=DEFAULT_RESPONSE_FORMAT,
-#         )
 
 
 SUPPORTED_SPEEDS = [0.5, 1.0, 2.0]
@@ -98,24 +85,6 @@ async def test_create_speech_with_varying_speed(openai_client: AsyncOpenAI) -> N
         if previous_size is not None:
             assert len(audio_bytes) * 1.5 < previous_size  # TODO: document magic number
         previous_size = len(audio_bytes)
-
-
-# UNSUPPORTED_SPEEDS = [0.1, 4.1]
-#
-#
-# @pytest.mark.parametrize("pull_model_without_cleanup", [SPEECH_MODEL_ID], indirect=True)
-# @pytest.mark.usefixtures("pull_model_without_cleanup")
-# @pytest.mark.asyncio
-# @pytest.mark.parametrize("speed", UNSUPPORTED_SPEEDS)
-# async def test_create_speech_with_unsupported_speed(openai_client: AsyncOpenAI, speed: float) -> None:
-#     with pytest.raises(UnprocessableEntityError):
-#         await openai_client.audio.speech.create(
-#             model=SPEECH_MODEL_ID,
-#             voice=VOICE_ID,
-#             input=DEFAULT_INPUT,
-#             response_format="pcm",
-#             speed=speed,
-#         )
 
 
 VALID_SAMPLE_RATES = [16000, 22050, 24000, 48000]
@@ -175,7 +144,6 @@ async def test_openai_speech_opus_sample_rate(
 
     audio_data_bytes = res.content
 
-    # Read opus audio using pydub
     audio_segment = pydub.AudioSegment.from_file(io.BytesIO(audio_data_bytes), format="ogg", codec="libopus")
     assert isinstance(audio_segment, pydub.AudioSegment)
 
@@ -198,7 +166,6 @@ async def test_speaches_speech_opus_sample_rate(
 
     audio_data_bytes = res.content
 
-    # Read opus audio using pydub
     audio_segment = pydub.AudioSegment.from_file(io.BytesIO(audio_data_bytes), format="ogg", codec="libopus")
 
     assert isinstance(audio_segment, pydub.AudioSegment)
@@ -411,13 +378,4 @@ async def test_speech_default_stream_format_is_audio(aclient: AsyncClient) -> No
 
 
 # TODO: add piper tests
-
-# TODO: implement the following test
-
-# NUMBER_OF_MODELS = 1
-# NUMBER_OF_VOICES = 124
-#
-#
-# @pytest.mark.asyncio
-# async def test_list_tts_models(openai_client: AsyncOpenAI) -> None:
-#     raise NotImplementedError
+# TODO: implement test_list_tts_models

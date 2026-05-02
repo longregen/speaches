@@ -24,7 +24,6 @@ LONG_TEXT = (
 
 
 def test_model_available():
-    """Check that the PyTorch Kokoro model is listed."""
     res = httpx.get(f"{BASE_URL}/v1/models", timeout=10)
     res.raise_for_status()
     models = res.json()
@@ -34,7 +33,6 @@ def test_model_available():
 
 
 def test_speech_basic():
-    """Generate speech and verify we get audio back."""
     start = time.perf_counter()
     res = httpx.post(
         f"{BASE_URL}/v1/audio/speech",
@@ -44,7 +42,6 @@ def test_speech_basic():
     elapsed = time.perf_counter() - start
     res.raise_for_status()
     audio_bytes = len(res.content)
-    # PCM16 at 24kHz: 2 bytes per sample, 24000 samples per second
     audio_duration = audio_bytes / (2 * 24000)
     rtf = audio_duration / elapsed
     print(f"  {audio_bytes} bytes, {audio_duration:.2f}s audio in {elapsed:.3f}s (RTF: {rtf:.1f}x)")
@@ -53,7 +50,6 @@ def test_speech_basic():
 
 
 def test_speech_long():
-    """Generate longer speech and verify RTF stays high."""
     start = time.perf_counter()
     res = httpx.post(
         f"{BASE_URL}/v1/audio/speech",
@@ -70,7 +66,6 @@ def test_speech_long():
 
 
 def test_speech_voices():
-    """Test multiple voices work."""
     for voice in ["af_heart", "am_adam", "bf_alice"]:
         res = httpx.post(
             f"{BASE_URL}/v1/audio/speech",

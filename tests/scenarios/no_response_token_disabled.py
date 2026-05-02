@@ -40,7 +40,6 @@ async def run_no_response_token_disabled_test() -> bool:
                     "no_response_token disabled",
                 )
 
-            # Send audio - LLM will respond "*" but it should NOT be dismissed
             await send_audio_chunks(ws, audio_pcm)
             await send_silence(ws)
 
@@ -54,8 +53,6 @@ async def run_no_response_token_disabled_test() -> bool:
             full_transcript = "".join(transcript_parts)
             checker.check(full_transcript.strip() == "*", f"transcript is '*' (got {full_transcript!r})")
 
-            # With no_response_token disabled, no conversation.item.deleted should follow
-            # (drain briefly to check nothing arrives)
             post_events = await drain_events(ws, duration=2.0)
             post_types = [e["type"] for e in post_events]
             deleted_count = sum(1 for t in post_types if t == "conversation.item.deleted")

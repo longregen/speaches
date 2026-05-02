@@ -1,9 +1,3 @@
-"""Realtime e2e scenarios.
-
-Each scenario module exposes a single async `run_*_test` coroutine.
-`SCENARIOS` lists them in execution order.
-"""
-
 from tests.scenarios.barge_in import run_barge_in_test
 from tests.scenarios.basic_pipeline import run_basic_pipeline_test
 from tests.scenarios.cancel_no_response import run_cancel_no_response_test

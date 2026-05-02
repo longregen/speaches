@@ -36,7 +36,6 @@ DEFAULT_CONFIG = Config(
     stt_model_ttl=DEFAULT_STT_TTL,
     tts_model_ttl=DEFAULT_TTS_TTL,
     vad_model_ttl=DEFAULT_VAD_TTL,
-    # disable the UI as it slightly increases the app startup time due to the imports it's doing
     enable_ui=False,
     chat_completion_base_url=_CHAT_COMPLETION_BASE_URL,
     chat_completion_api_key=SecretStr(_CHAT_COMPLETION_API_KEY),
@@ -81,8 +80,6 @@ class AclientFactory(Protocol):
 
 @pytest_asyncio.fixture()
 async def aclient_factory(mocker: MockerFixture) -> AclientFactory:
-    """Returns a context manager that provides an `AsyncClient` instance with `app` using the provided configuration."""
-
     @asynccontextmanager
     async def inner(config: Config = DEFAULT_CONFIG) -> AsyncGenerator[AsyncClient]:
         from speaches.executors.shared.registry import ExecutorRegistry
@@ -91,10 +88,6 @@ async def aclient_factory(mocker: MockerFixture) -> AclientFactory:
         mocker.patch("speaches.dependencies.get_config", return_value=config)
         mocker.patch("speaches.main.get_config", return_value=config)
         mocker.patch("speaches.dependencies.get_executor_registry", return_value=ExecutorRegistry(config))
-        # NOTE: I couldn't get the following to work but it shouldn't matter
-        # mocker.patch(
-        #     "speaches.text_utils.Transcription._ensure_no_word_overlap.get_config", return_value=config
-        # )
 
         app = create_app()
         # https://fastapi.tiangolo.com/advanced/testing-dependencies/
@@ -119,7 +112,6 @@ def openai_client(aclient: AsyncClient) -> AsyncOpenAI:
 @pytest.fixture
 def actual_openai_client() -> AsyncOpenAI:
     return AsyncOpenAI(
-        # `base_url` is provided in case `OPENAI_BASE_URL` is set to a different value
         base_url=OPENAI_BASE_URL,
         max_retries=0,
     )
@@ -136,27 +128,6 @@ async def dynamic_openai_client(
     elif target == "speaches":
         async with aclient_factory() as aclient:
             yield AsyncOpenAI(api_key="cant-be-empty", http_client=aclient, max_retries=0)
-
-
-# TODO: remove the download after running the tests
-# TODO: do not download when not needed
-# @pytest.fixture(scope="session", autouse=True)
-# def download_piper_voices() -> None:
-#     # Only download `voices.json` and the default voice
-#     snapshot_download("rhasspy/piper-voices", allow_patterns=["voices.json", "en/en_US/amy/**"])
-
-
-# @pytest_asyncio.fixture()
-# async def parameterized_fixt(request: pytest.FixtureRequest) -> str:
-#     """A parameterized fixture that returns the value of the `target` parameter."""
-#     print(f"Running test with target: {request.param}")
-#     return request.param
-#
-#
-# @pytest.mark.parametrize("parameterized_fixt", ["speaches", "openai"], indirect=True)
-# @pytest.mark.asyncio
-# async def test_parametirized_fixt(parameterized_fixt: str) -> None:
-#     """Generate tests for the `dynamic_openai_client` fixture."""
 
 
 @pytest_asyncio.fixture()

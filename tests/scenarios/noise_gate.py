@@ -47,12 +47,9 @@ async def run_noise_gate_test() -> bool:
                 "no_speech_prob_threshold updated to 0.0",
             )
 
-        # Send real speech audio - VAD will trigger, but noise gate should reject
         await send_audio_chunks(ws, audio_pcm)
         await send_silence(ws)
 
-        # We should see speech_started and speech_stopped, but NO response
-        # (because the transcription is discarded by noise gate before creating the item)
         events: list[dict[str, Any]] = []
         try:
             async with asyncio.timeout(15):
@@ -60,11 +57,8 @@ async def run_noise_gate_test() -> bool:
                     raw = await ws.recv()
                     event = json.loads(raw)
                     events.append(event)
-                    # If we see response.created, the noise gate didn't work
                     if event["type"] == "response.created":
                         break
-                    # After committed, if noise gate works, nothing else should arrive.
-                    # Give it a few more seconds for transcription to complete.
                     if event["type"] == "input_audio_buffer.committed":
                         more = await drain_events(ws, duration=10.0)
                         events.extend(more)
@@ -82,7 +76,6 @@ async def run_noise_gate_test() -> bool:
             "input_audio_buffer.committed" in event_types,
             "buffer committed (audio still committed)",
         )
-        # The key check: no conversation item created, no response triggered
         checker.check(
             "conversation.item.added" not in event_types,
             "no conversation item created (noise gate rejected)",
@@ -110,7 +103,6 @@ async def run_noise_gate_test() -> bool:
         await ws.send(json.dumps(update_event))
         await collect_events_until(ws, "session.updated", timeout_seconds=5)
 
-        # Send the same audio - should pass through to LLM
         await send_audio_chunks(ws, audio_pcm)
         await send_silence(ws)
 

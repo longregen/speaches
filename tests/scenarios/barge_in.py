@@ -55,10 +55,6 @@ async def run_barge_in_test() -> bool:
             logger.info("Sending speech audio to trigger barge-in...")
             await send_audio_chunks(ws, audio_pcm)
             await send_silence(ws)
-            # After barge-in we expect:
-            # 1. response.done with status=cancelled (first response interrupted)
-            # 2. speech_started (new speech detected)
-            # 3. Eventually a new response.done with status=completed
             barge_in_events: list[dict[str, Any]] = []
             response_done_count = 0
             try:
@@ -69,10 +65,8 @@ async def run_barge_in_test() -> bool:
                         barge_in_events.append(event)
                         if event["type"] == "response.done":
                             response_done_count += 1
-                            # After barge-in we expect: cancelled response.done, then eventually completed response.done
                             if response_done_count >= 2:
                                 break
-                            # If the first response.done is completed, the barge-in might have been too late
                             resp_status = event.get("response", {}).get("status")
                             if resp_status == "completed":
                                 break
@@ -85,7 +79,6 @@ async def run_barge_in_test() -> bool:
             response_done_events = [e for e in all_events if e["type"] == "response.done"]
 
             if len(response_done_events) >= 2:
-                # Ideal case: first response cancelled, second response completed
                 first_status = response_done_events[0].get("response", {}).get("status")
                 second_status = response_done_events[1].get("response", {}).get("status")
                 checker.check(
@@ -103,8 +96,6 @@ async def run_barge_in_test() -> bool:
                     f"barge-in created a new response (ids: {first_id} vs {second_id})",
                 )
             elif len(response_done_events) == 1:
-                # The slow response might have completed before barge-in took effect.
-                # This is still acceptable - just verify we got a speech_started.
                 checker.check(
                     "input_audio_buffer.speech_started" in all_types,
                     "speech_started detected during barge-in attempt",

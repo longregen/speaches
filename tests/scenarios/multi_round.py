@@ -66,10 +66,8 @@ async def run_multi_round_test() -> bool:
                 f"round {round_num}: mock LLM received request",
             )
 
-            # In round 2, verify conversation history grew
             if round_num == 2 and received_requests:
                 messages = received_requests[-1].get("messages", [])
-                # Should have messages from both rounds (user + assistant from round 1, plus user from round 2)
                 checker.check(
                     len(messages) >= 3,
                     f"round 2: LLM received conversation history ({len(messages)} messages)",
