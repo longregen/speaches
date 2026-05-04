@@ -269,7 +269,7 @@ async def _partial_transcription_loop(ctx: SessionContext, input_audio_buffer: I
             audio = Audio(audio_snapshot, sample_rate=SAMPLE_RATE)
             request = TranscriptionRequest(
                 audio=audio,
-                model=ctx.session.input_audio_transcription.model,
+                model=ctx.partial_stt_model_id,
                 language=ctx.session.input_audio_transcription.language,
                 response_format="text",
                 speech_segments=[],
@@ -278,7 +278,7 @@ async def _partial_transcription_loop(ctx: SessionContext, input_audio_buffer: I
             )
             try:
                 result = await asyncio.to_thread(
-                    ctx.stt_model_manager.handle_non_streaming_transcription_request, request
+                    ctx.partial_stt_model_manager.handle_non_streaming_transcription_request, request
                 )
                 transcript = result[0] if isinstance(result, tuple) else result.text
                 if transcript.strip():

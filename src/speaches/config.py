@@ -217,7 +217,16 @@ class Config(BaseSettings):
     """
     Default speech-to-text model used for the realtime WebSocket/WebRTC API
     when no explicit transcription_model is provided by the client.
-    Set via DEFAULT_REALTIME_STT_MODEL environment variable.
+    Final-commit transcription path. Set via DEFAULT_REALTIME_STT_MODEL.
+    """
+
+    default_realtime_partial_stt_model: str | None = None
+    """
+    Optional model used for the every-N-sec partial transcription pass in the
+    realtime API. When unset, partials reuse the same model as final commits
+    (the legacy single-model behaviour). Use this to run a fast/small model
+    for low-latency interim text and a higher-quality model on the final
+    buffer at commit. Set via DEFAULT_REALTIME_PARTIAL_STT_MODEL.
     """
 
     default_no_speech_prob_threshold: float | None = Field(default=0.6, ge=0.0, le=1.0)

@@ -92,6 +92,19 @@ class SessionContext:
         )
         self._stt_model_id: str = session.input_audio_transcription.model
 
+        # Partial transcriptions (every-N-sec interim text during a turn) can
+        # use a different — typically smaller, faster — model than the final
+        # commit transcription. Falls back to the final model when unset.
+        from speaches.dependencies import get_config
+
+        partial_id = get_config().default_realtime_partial_stt_model or self._stt_model_id
+        self._partial_stt_model_id: str = partial_id
+        self._partial_stt_model_manager: TranscriptionHandler = (
+            self._stt_model_manager
+            if partial_id == self._stt_model_id
+            else executor_registry.resolve_stt_model_manager(partial_id)
+        )
+
     @property
     def tts_model_manager(self) -> SpeechHandler:
         current = self.session.speech_model
@@ -107,6 +120,27 @@ class SessionContext:
             self._stt_model_manager = self.executor_registry.resolve_stt_model_manager(current)
             self._stt_model_id = current
         return self._stt_model_manager
+
+    @property
+    def partial_stt_model_id(self) -> str:
+        return self._partial_stt_model_id
+
+    @property
+    def partial_stt_model_manager(self) -> TranscriptionHandler:
+        # Re-resolve when the final model changed AND we were inheriting from it
+        # (no separate partial config) so partial keeps tracking final.
+        from speaches.dependencies import get_config
+
+        cfg_partial = get_config().default_realtime_partial_stt_model
+        target = cfg_partial or self.session.input_audio_transcription.model
+        if target != self._partial_stt_model_id:
+            self._partial_stt_model_manager = (
+                self.stt_model_manager
+                if target == self._stt_model_id
+                else self.executor_registry.resolve_stt_model_manager(target)
+            )
+            self._partial_stt_model_id = target
+        return self._partial_stt_model_manager
 
     @property
     def state(self) -> ConversationState:
